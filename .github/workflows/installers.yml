@@ -51,7 +51,9 @@ jobs:
           set -o pipefail
           pnpm exec vite build
           if ! pnpm exec electron-builder ${{ matrix.target }} --publish never 2>&1 | tee build.log; then
-            tail -n 25 build.log | sed -e 's/%/%25/g' | while IFS= read -r line; do echo "::error title=electron-builder::$line"; done
+            # One annotation (a step shows at most ten): the error lines, then the end of the log.
+            { grep -E '⨯|Error|error:' build.log | head -n 20; echo '-----'; tail -n 40 build.log; } > tail.log
+            echo "::error title=electron-builder::$(sed -e 's/%/%25/g' tail.log | awk '{printf "%s%%0A", $0}')"
             exit 1
           fi
       - uses: actions/upload-artifact@v4
