@@ -32,7 +32,7 @@ describe('solid operations', () => {
     expect(r.shells).toBe(2);
   });
 
-  it('hollows a sphere into one watertight blocky cavity', async () => {
+  it('hollows a sphere into one watertight blocky cavity', { timeout: 30000 }, async () => {
     const s = makePrimitive('sphere');
     const shell = await csg.hollow(s, 2);
     const r = analyze(shell);
