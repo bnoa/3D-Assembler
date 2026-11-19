@@ -21,6 +21,7 @@ import { type Lang, currentLang, setLang, systemLang, toEnglish } from './i18n';
 import { type ModeContext, type ModeSpec, MODES, imageInsertMode } from './modes';
 import { type Bed, DEFAULT_BED } from '../analysis/printability';
 import { imageData } from '../geometry/image-insert';
+import { APP_VERSION, type UpdateInfo, checkForUpdate } from '../io/update';
 import { settleRotation } from '../geometry/settle';
 
 type Tab = 'insert' | 'object' | 'edit' | 'paint' | 'view' | 'help';
@@ -54,13 +55,15 @@ interface Prefs {
   collision: boolean;
   /** Interface language: the system's (French for a French system, English otherwise) or a choice. */
   lang: 'auto' | Lang;
+  /** Look for a new version at startup (off by default: nothing is sent unless the user asks). */
+  checkUpdates: boolean;
 }
 
 function loadPrefs(): Prefs {
   try {
-    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', ...JSON.parse(localStorage.getItem('3dbr.prefs') ?? '{}') };
+    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', checkUpdates: false, ...JSON.parse(localStorage.getItem('3dbr.prefs') ?? '{}') };
   } catch {
-    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto' };
+    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', checkUpdates: false };
   }
 }
 
@@ -168,6 +171,7 @@ export class App {
     recoverySession();
     void this.offerRecovery();
     this.bindInstall();
+    setTimeout(() => void this.startupUpdateCheck(), 4000);
   }
 
   // --- installed app -------------------------------------------------------------------------------
@@ -1235,13 +1239,56 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
       h('div', { class: 'set-block' }, h('div', { class: 'set-title' }, 'Mode Couleur de l’application'), ...themes),
       sw('Alignement', this.prefs.align, (v) => { this.prefs.align = v; save(); }),
       sw('Collision', this.prefs.collision, (v) => { this.prefs.collision = v; save(); }),
-      h('div', { class: 'set-block' }, h('div', {}, '3D Assembler 0.1'), h('div', {}, 'Logiciel libre (MIT)'),
-        h('button', { class: 'set-link', onclick: () => this.showAbout() }, 'À propos')),
+      h('div', { class: 'set-block' }, h('div', {}, `3D Assembler ${APP_VERSION}`), h('div', {}, 'Logiciel libre (MIT)'),
+        h('button', { class: 'set-link', onclick: () => this.showAbout() }, 'À propos'),
+        this.updateBlock()),
+      sw('Rechercher les mises à jour au démarrage', this.prefs.checkUpdates, (v) => { this.prefs.checkUpdates = v; save(); }),
       h('div', { class: 'set-block' }, h('div', { class: 'set-title' }, 'Plateau d’impression'), bedIn('x', 'Largeur'), bedIn('y', 'Profondeur'), bedIn('z', 'Hauteur')));
     this.viewEl.append(panel);
     // The panel closes with the menu.
     const obs = new MutationObserver(() => { if (this.drawer.classList.contains('hidden')) { panel.remove(); obs.disconnect(); } });
     obs.observe(this.drawer, { attributes: true, attributeFilter: ['class'] });
+  }
+
+  /** « Rechercher les mises à jour »: asks GitHub for the latest release, on request only. */
+  private updateBlock(): HTMLElement {
+    const out = h('div', { class: 'set-update', 'aria-live': 'polite' });
+    const btn = h('button', { class: 'set-link', onclick: () => void run() }, 'Rechercher les mises à jour') as HTMLButtonElement;
+    const run = async () => {
+      btn.disabled = true;
+      out.replaceChildren(h('span', {}, 'Recherche…'));
+      try {
+        const u = await checkForUpdate();
+        if (!u.newer) out.replaceChildren(h('span', {}, `Vous avez la dernière version (${APP_VERSION}).`));
+        else out.replaceChildren(h('span', {}, `Version ${u.latest} disponible.`), ' ', this.updateAction(u));
+      } catch {
+        out.replaceChildren(h('span', {}, 'Impossible de joindre GitHub. Vérifiez la connexion.'));
+      } finally {
+        btn.disabled = false;
+      }
+    };
+    return h('div', {}, btn, out);
+  }
+
+  /** Desktop: the installer of this system, run over the installed version. Web: a reload. */
+  private updateAction(u: UpdateInfo): HTMLElement {
+    const desktop = 'assemblerDesktop' in window;
+    return h('button', { class: 'set-link', onclick: () => (desktop ? window.open(u.download, '_blank', 'noopener') : location.reload()) },
+      desktop ? 'Télécharger l’installateur' : 'Recharger la page');
+  }
+
+  /** Check at startup, when turned on in the settings: a message only if a new version exists. */
+  private async startupUpdateCheck(): Promise<void> {
+    if (!this.prefs.checkUpdates) return;
+    try {
+      const u = await checkForUpdate();
+      if (!u.newer) return;
+      const desktop = 'assemblerDesktop' in window;
+      this.toast(`3D Assembler ${u.latest} est disponible.`, 'info', {
+        label: desktop ? 'Télécharger' : 'Recharger',
+        run: () => (desktop ? window.open(u.download, '_blank', 'noopener') : location.reload()),
+      }, true);
+    } catch { /* offline: no message */ }
   }
 
   private applyPrefs(): void {

@@ -74,9 +74,11 @@ The installers are not signed, which is why the systems show a warning the first
 
 You can also [use 3D Assembler in your browser](https://bnoa.github.io/3D-Assembler/), with nothing to install. Your files are opened on your computer and never uploaded. In Chrome or Edge you can then install it as an app: the browser offers **Install** in its address bar, or use **Install the app** in the ☰ menu.
 
+**Updating.** In ☰ > **Settings**, click **Check for updates**: if a new version exists, the app offers its installer; run it and it replaces the installed version (your files are not touched). You can also turn on **Check for updates at startup** (off by default). The browser version updates itself: reload the page.
+
 **Uninstalling.** Windows: **Settings** > **Apps** > 3D Assembler > **Uninstall**. macOS: drag the app from Applications to the Trash. Linux: delete the AppImage (or `sudo apt remove 3d-assembler` for the `.deb`).
 
-**Privacy.** 3D Assembler has no account, no telemetry and no ads. It does not transfer any information to other networked systems unless specifically requested (for example when you click a link to a web page).
+**Privacy.** 3D Assembler has no account, no telemetry and no ads. It does not transfer any information to other networked systems unless specifically requested (for example when you click a link to a web page, or check for updates: the app then asks GitHub for the latest version number, and sends nothing else).
 
 **Language.** The interface follows your system language (English, or French on a French system). Change it in ☰ > **Settings** > **Language**.
 

@@ -276,5 +276,18 @@
   "Langue": "Language",
   "Refaire": "Redo",
   "Annuler (Ctrl+Z)": "Undo (Ctrl+Z)",
-  "Refaire (Ctrl+Y)": "Redo (Ctrl+Y)"
+  "Refaire (Ctrl+Y)": "Redo (Ctrl+Y)",
+  "Rechercher les mises à jour": "Check for updates",
+  "Rechercher les mises à jour au démarrage": "Check for updates at startup",
+  "Recherche…": "Checking…",
+  "Vous avez la dernière version ({0}).": "You have the latest version ({0}).",
+  "Version {0} disponible.": "Version {0} is available.",
+  "Impossible de joindre GitHub. Vérifiez la connexion.": "Could not reach GitHub. Check your connection.",
+  "Télécharger l’installateur": "Download the installer",
+  "Recharger la page": "Reload the page",
+  "3D Assembler {0} est disponible.": "3D Assembler {0} is available.",
+  "Télécharger": "Download",
+  "Recharger": "Reload",
+  "3D Assembler {0}": "3D Assembler {0}",
+  "Logiciel libre (MIT)": "Free software (MIT)"
 }
