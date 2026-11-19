@@ -121,6 +121,12 @@
       "category": "Graphics",
       "maintainer": "3D Assembler contributors",
       "artifactName": "3D-Assembler-Linux-${arch}.${ext}"
+    },
+    "appImage": {
+      "artifactName": "3D-Assembler-Linux-x64.${ext}"
+    },
+    "deb": {
+      "artifactName": "3D-Assembler-Linux-x64.${ext}"
     }
   },
   "license": "MIT"
