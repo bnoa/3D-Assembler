@@ -37,6 +37,9 @@ const TABS: { id: Tab; label: string }[] = [
 /** Text safe to put in HTML (names come from file names). */
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 
+/** Colour of an imported object whose file has none (3D Builder's grey). */
+const IMPORT_GREY = '#bcbcbc';
+
 export const UNITS = {
   micron: { label: 'Micron', short: 'µm', mm: 0.001 },
   mm: { label: 'Millimètre', short: 'mm', mm: 1 },
@@ -288,7 +291,7 @@ export class App {
         const file = new File([r.data], `${name}.3mf`);
         try { Object.assign(this.doc.info, read3MFInfo(new Uint8Array(await file.arrayBuffer()))); } catch { /* no metadata */ }
         for (const item of await importFile(file)) {
-          const opts = { name: item.name, color: item.color, faceColors: item.faceColors, texture: item.texture };
+          const opts = { name: item.name, color: item.color ?? IMPORT_GREY, faceColors: item.faceColors, texture: item.texture }; // no colour in the file: 3D Builder's grey
           if (item.local) this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts);
           else this.doc.addWorldMesh(item.mesh, opts);
         }
@@ -725,7 +728,7 @@ export class App {
       for (const f of files) {
         const first = added.length;
         for (const item of await importFile(f)) {
-          const opts = { name: item.name, color: item.color, faceColors: item.faceColors, texture: item.texture };
+          const opts = { name: item.name, color: item.color ?? IMPORT_GREY, faceColors: item.faceColors, texture: item.texture }; // no colour in the file: 3D Builder's grey
           const o = item.local ? this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts) : this.doc.addWorldMesh(item.mesh, { ...opts, dropOnPlate: true });
           if (item.local) {
             // Rest on the plate, keeping the rotation and scale read from the file.
@@ -744,40 +747,12 @@ export class App {
       this.home.classList.add('hidden');
       this.doc.select(added);
       this.frameAll();
-      const bad = this.doc.objects.filter((o) => added.includes(o.id) && !isValid(o)).length;
-      if (!bad) this.toast(`${added.length} objet(s) chargé(s).`, 'ok');
       void this.checkSelfIntersections(added);
-      // Unit-less formats: a model a few millimetres (or metres) wide was probably not in mm.
-      const unitless = files.some((f) => /\.(stl|obj|ply|wrl)$/i.test(f.name));
-      const extent = added.length ? Math.max(...size(worldBounds(added.map((id) => this.doc.get(id)!)))) : 0;
-      if (unitless && (extent < 3 || extent > 2000)) {
-        this.toast(`Le modèle mesure ${fmtNum(extent)} mm : le fichier n’était peut-être pas en millimètres.`, 'warn',
-          { label: 'Choisir l’unité du fichier', run: () => this.fileUnitDialog(added) }, true);
-      }
+      // Formats without a unit (STL, OBJ, PLY, VRML): as 3D Builder, the « Unités du fichier » screen
+      // asks for the unit before the import is kept (mm preselected).
+      if (added.length && files.some((f) => /\.(stl|obj|ply|wrl)$/i.test(f.name))) this.enterMode(MODES.importUnit);
+      else if (!this.doc.objects.some((o) => added.includes(o.id) && !isValid(o))) this.toast(`${added.length} objet(s) chargé(s).`, 'ok');
     });
-  }
-
-  /** Rescales freshly imported objects from the unit their file actually used. */
-  private fileUnitDialog(ids: number[]): void {
-    let unit: Unit = 'inch';
-    const box = h('fieldset', {}, h('legend', {}, 'Unité du fichier'),
-      ...Object.entries(UNITS).map(([id, u]) => h('label', {}, h('input', { type: 'radio', name: 'fileunit', value: id, checked: id === unit, onchange: () => (unit = id as Unit) }), u.label)));
-    this.dialog('Unité du fichier', [box], [{
-      label: 'Convertir', primary: true, run: () => {
-        const k = UNITS[unit].mm;
-        this.doc.checkpoint();
-        for (const id of ids) {
-          const o = this.doc.get(id);
-          if (!o) continue;
-          const b = objectBounds(o);
-          const scale = o.scale.map((s) => s * k) as Vec3;
-          // Keep it standing on the plate where it was.
-          this.doc.update(id, { scale, position: [o.position[0], o.position[1], o.position[2] + (o.position[2] - b.min[2]) * (k - 1)] });
-        }
-        this.doc.emit();
-        this.frameAll();
-      },
-    }]);
   }
 
   /**

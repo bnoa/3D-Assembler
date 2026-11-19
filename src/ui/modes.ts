@@ -1,7 +1,7 @@
 // Tool modes: the blue bar with Annuler / OK plus the tool's own controls, and a live preview.
 import { BufferGeometry, DoubleSide, Float32BufferAttribute, Matrix4, Mesh, MeshBasicMaterial, Object3D, Vector3 } from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { MATERIALS, type MaterialKind, NO_PAINT, type SceneObject, movedTransform, objectMatrix, worldMesh } from '../core/model';
+import { MATERIALS, type MaterialKind, NO_PAINT, type SceneObject, isValid, movedTransform, objectMatrix, worldMesh } from '../core/model';
 import { type MeshData, bounds, merged, transformed, triCount } from '../core/mesh-data';
 import { hexToInt, intToHex, paintRegion } from '../geometry/paint';
 import { SIMPLIFY_MAX_PASSES, simplifyPasses } from '../geometry/simplify-passes';
@@ -481,6 +481,43 @@ export const MODES: Record<string, ModeSpec> = {
       doc.checkpoint();
       ctx.selection.forEach((o) => doc.update(o.id, movedTransform(o, q)));
       doc.emit();
+      return true;
+    },
+  },
+
+  importUnit: {
+    okLabel: 'Modèle d’importation',
+    build(ctx) {
+      // 3D Builder's import screen for files without a unit: the object is shown at the chosen unit
+      // (mm first) and the view follows; Annuler drops the import.
+      const doc = ctx.app.doc;
+      const base = ctx.selection.map((o) => ({ id: o.id, scale: [...o.scale] as [number, number, number], position: [...o.position] as [number, number, number] }));
+      const units = [['micron', 'µm', 0.001], ['mm', 'mm', 1], ['cm', 'cm', 10], ['inch', 'po', 25.4], ['foot', 'pi', 304.8], ['m', 'm', 1000]] as const;
+      let current = 1;
+      const buttons = units.map(([id, label, k]) => {
+        const b = h('button', { class: `toggle${k === 1 ? ' on' : ''}`, 'data-unit': id, 'data-en': label === 'po' ? 'in' : label === 'pi' ? 'ft' : label }, label) as HTMLButtonElement;
+        b.addEventListener('click', () => {
+          current = k;
+          for (const x of buttons) x.classList.toggle('on', x === b);
+          // Resting objects keep standing on the plate when everything is scaled about the origin.
+          for (const o of base) doc.update(o.id, { scale: o.scale.map((s) => s * k) as [number, number, number], position: o.position.map((p) => p * k) as [number, number, number] });
+          doc.emit();
+          ctx.app.frameAll();
+        });
+        return b;
+      });
+      ctx.bar.append(h('span', { class: 'stat', style: 'align-self:center' }, 'Unités du fichier'), ...buttons);
+      return () => {
+        if (st(ctx, 'applied', false)) return;
+        doc.remove(base.map((o) => o.id));
+        doc.emit();
+        void current;
+      };
+    },
+    async apply(ctx) {
+      set(ctx, 'applied', true);
+      const bad = ctx.selection.filter((o) => !isValid(ctx.app.doc.get(o.id) ?? o)).length;
+      if (!bad) ctx.app.toast(`${ctx.selection.length} objet(s) chargé(s).`, 'ok');
       return true;
     },
   },
