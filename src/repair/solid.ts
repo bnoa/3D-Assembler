@@ -1,9 +1,9 @@
 // Full repair: topological clean-up, then merging of overlapping shells into one solid
 // (what 3D Builder's engine does with its boolean "TopBoolean" stage).
 import type { MeshData } from '../core/mesh-data';
-import { bounds, signedVolume } from '../core/mesh-data';
+import { bounds, signedVolume, size } from '../core/mesh-data';
 import { analyze } from './analyze';
-import { cleanMesh, repairMesh, type RepairLog, type RepairOptions } from './repair';
+import { cleanMesh, repairMesh, splitLongEdgesMesh, wrapMaxEdge, type RepairLog, type RepairOptions } from './repair';
 import { shells } from './topology';
 import { loadManifold, fromManifold } from '../geometry/csg';
 import { wrapMesh } from './wrap';
@@ -53,6 +53,22 @@ function boxesOverlap(a: MeshData, b: MeshData): boolean {
 }
 
 export async function repairSolid(input: MeshData, opts: Partial<RepairOptions> = {}): Promise<{ mesh: MeshData; log: SolidRepairLog }> {
+  const valid = analyze(input).ok;
+  const result = await repairSolidSurface(input, opts);
+  // The wrap stage of 3D Builder's repair halves every edge longer than 0.304 × the diagonal of
+  // the model, whether or not triangles cross: a coarse model always comes out subdivided. The
+  // limit comes from the model as imported (loose fragments included, removed afterwards).
+  // Applied to the final surface, so the halving never gets in the way of the wrap itself.
+  // 3D Builder never offers to repair a valid model, so one with nothing to fix keeps its faces.
+  const nothingToFix = valid && !result.log.selfIntersections && !result.log.shellsMerged;
+  if (!nothingToFix && result.mesh.indices.length && input.indices.length) {
+    const sz = size(bounds(input));
+    result.mesh = splitLongEdgesMesh(result.mesh, wrapMaxEdge(Math.max(...sz), Math.hypot(...sz)));
+  }
+  return result;
+}
+
+async function repairSolidSurface(input: MeshData, opts: Partial<RepairOptions>): Promise<{ mesh: MeshData; log: SolidRepairLog }> {
   let { mesh, log } = repairMesh(input, opts);
   let selfIntersections = 0;
   // Wrap: rebuild the outer surface when triangles cross each other (within or across shells).

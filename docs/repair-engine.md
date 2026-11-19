@@ -60,7 +60,7 @@ The work is asynchronous, one scene object at a time. If repairing object by obj
 
 **Wrap** (exact topological Boolean)
 1. Grid step = diagonal / 100,000, bounded between 1e-6 and 1.
-2. Edges that are too long are halved until they are shorter than 30,400 grid steps.
+2. Edges that are too long are halved until they are shorter than 30,400 grid steps, i.e. 0.304 × the diagonal of the model. This runs on **every** repair, even when no triangles cross, and the extra vertices stay in the result (see "Subdivision of coarse models" below).
 3. Coordinates are rounded to integers. Triangles that became flat are dropped.
 4. All intersections between triangles are computed.
 5. Exact re-triangulation plane by plane. Overlapping coplanar faces are merged.
@@ -70,6 +70,23 @@ The work is asynchronous, one scene object at a time. If repairing object by obj
 9. A face is kept if **exactly one** of its sides touches outside air. Interior walls and zero-thickness sheets disappear.
 10. A component entirely enclosed in the material of another is removed.
 11. On output, faces are oriented towards the air and non-manifold edges are separated in pairs.
+
+**Subdivision of coarse models** (measured on small STL files, November 2026)
+- The limit is taken from the bounding box at the Wrap stage, loose fragments included (they are removed later as small shells).
+- The halving works in rounds. In each round every edge longer than the limit gets its midpoint; each face is then cut by bisecting its marked edges, longest first, joining the midpoint to the opposite corner (1 marked edge: 2 faces, 2: 3 faces, 3: 4 faces). Rounds repeat until no edge is too long.
+- Results:
+
+| File | Faces before | Faces after |
+|---|---|---|
+| 20 mm cube with one top triangle missing | 11 | 96: each side a 2 × 2 grid, each square 4 triangles around its centre |
+| same, whole top missing (4-edge hole) | 10 | 96 |
+| 20 mm cube, one flipped face | 12 | 96 |
+| 20 mm cube, one duplicated face | 13 | 96 |
+| cube with a hole, a flipped face, a duplicated face and a 1 mm fragment 20 mm away | 14 | 48 (the fragment enlarges the box, so the sides are halved only once; the fragment is removed) |
+| 40 × 10 × 5 mm box, one top triangle missing | 11 | 76 (the 10 × 5 ends stay 2 triangles) |
+
+- A valid model is not offered the repair, so it keeps its faces.
+- **3D Builder defect, not reproduced**: the faces of a filled hole get no colour, and the halving blends vertex colours with this "no colour" (transparent black). The patch then shows a dark gradient although it is flat and correctly oriented. 3D Assembler gives the fill faces the colour of their neighbours.
 
 **Degenerate faces**
 1. Edges that are too long are split, then vertices are rounded onto the grid.
@@ -94,6 +111,7 @@ The work is asynchronous, one scene object at a time. If repairing object by obj
 | 2, 5, 8 Holes | `closeHoles(w, 3)` then `closeHoles(w, ∞)`; `minAreaTriangulation` (same method), plus a penalty on diagonals that already exist elsewhere |
 | 3 Duplicates | `removeDuplicates`. Difference: two identical opposite faces (zero-thickness wall) are removed together |
 | 4, 7 Flipped | `orient`: majority vote by area, as in 3D Builder |
+| 9 Wrap, edge halving | `splitLongEdgesMesh` with `wrapMaxEdge` (0.304 × diagonal of the imported model), same rounds and bisection order, same results on the files above. Applied by `repairSolid` to the final surface, after the Wrap rather than before it (halving first leaves coincident faces that our Wrap does not see as crossing). Skipped when the model was already valid and nothing was merged |
 | 9 Wrap | `src/repair/wrap.ts`, called by `repairSolid` as soon as triangles intersect: same integer grid (diagonal / 100,000), same intersections, re-triangulation **plane by plane** with overlap counting, same air propagation in angular order. Differences: see below |
 | 10 Degenerate | `removeDegenerate`: 0.002 grid and flip of the longest edge, as in 3D Builder |
 | 11 Small shells | `removeTinyShells`: absolute volume below 0.001, as in 3D Builder |

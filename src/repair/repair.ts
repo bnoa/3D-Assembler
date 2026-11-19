@@ -29,6 +29,35 @@ export const DEFAULT_REPAIR: RepairOptions = {
   exportMerge: 0.001,
 };
 
+/** Wrap grid step for a normalised model: diagonal / 100,000, bounded to [1e-6, 1]. */
+export function wrapGridStep(diagonal: number): number {
+  return Math.min(1, Math.max(1e-6, diagonal / 100000));
+}
+
+/** Longest edge the wrap keeps, in grid steps. */
+export const WRAP_MAX_EDGE_STEPS = 30400;
+
+/**
+ * Longest edge the wrap stage of the repair keeps for a model: 30,400 grid steps, the grid being
+ * the diagonal of the normalised model / 100,000. Normalisation is a uniform scale, so in model
+ * units this is 0.304 × the diagonal of the model (`ext` = largest side, `diag` = diagonal).
+ */
+export function wrapMaxEdge(ext: number, diag: number): number {
+  const scale = normalisationScale(ext);
+  return (WRAP_MAX_EDGE_STEPS * wrapGridStep(diag * scale)) / scale;
+}
+
+/**
+ * The edge halving of 3D Builder's wrap stage: every edge longer than `maxLen` is halved, round
+ * after round, until none is left, so a coarse model comes out of the repair with its faces
+ * subdivided (a 20 mm cube: each side cut into a 2 × 2 grid, each square into 4 triangles).
+ */
+export function splitLongEdgesMesh(input: MeshData, maxLen: number): MeshData {
+  const w: Work = { pos: Float64Array.from(input.positions), tris: Array.from(input.indices) };
+  if (!splitLongEdges(w, maxLen)) return input;
+  return compact(w);
+}
+
 /** Scale so the largest side lands in [5, 400], as 3D Builder does before repairing. */
 export function normalisationScale(ext: number): number {
   if (ext > 1e-6 && ext < 5) return 5 / ext;
@@ -138,6 +167,67 @@ export function repairMesh(input: MeshData, opts: Partial<RepairOptions> = {}): 
 }
 
 // --- stages -----------------------------------------------------------------------------------
+
+/**
+ * Halves the edges longer than `maxLen` at their midpoint, in rounds, until none is left. In a
+ * round every long edge gets its midpoint (shared by both faces, so the mesh stays conforming);
+ * each face is then cut by bisecting its marked edges, longest first, joining the midpoint to
+ * the opposite corner. A face with one long edge is cut in 2, with two in 3, with three in 4.
+ */
+function splitLongEdges(w: Work, maxLen: number): number {
+  if (!(maxLen > 0)) return 0;
+  let added = 0;
+  for (let round = 0; round < 40; round++) {
+    const nv = w.pos.length / 3;
+    const p = w.pos;
+    const len2 = (a: number, c: number) => {
+      const dx = p[a * 3] - p[c * 3], dy = p[a * 3 + 1] - p[c * 3 + 1], dz = p[a * 3 + 2] - p[c * 3 + 2];
+      return dx * dx + dy * dy + dz * dz;
+    };
+    const max2 = maxLen * maxLen;
+    const mid = new Map<number, number>();
+    const extra: number[] = [];
+    for (let i = 0; i < w.tris.length; i += 3) {
+      for (let k = 0; k < 3; k++) {
+        const a = w.tris[i + k], c = w.tris[i + ((k + 1) % 3)];
+        const key = edgeKey(a, c, nv);
+        if (mid.has(key) || len2(a, c) <= max2) continue;
+        mid.set(key, nv + extra.length / 3);
+        for (let d = 0; d < 3; d++) extra.push((p[a * 3 + d] + p[c * 3 + d]) / 2);
+      }
+    }
+    if (!mid.size) break;
+    const pos = new Float64Array(p.length + extra.length);
+    pos.set(p);
+    pos.set(extra, p.length);
+    const tris: number[] = [];
+    const origin: number[] | undefined = w.origin ? [] : undefined;
+    const cut = (t: [number, number, number], tag: number) => {
+      let best = -1, bestLen = -1;
+      for (let k = 0; k < 3; k++) {
+        const a = t[k], c = t[(k + 1) % 3];
+        if (a >= nv || c >= nv || !mid.has(edgeKey(a, c, nv))) continue;
+        const l = len2(a, c);
+        if (l > bestLen) { best = k; bestLen = l; }
+      }
+      if (best < 0) {
+        tris.push(t[0], t[1], t[2]);
+        origin?.push(tag);
+        return;
+      }
+      const a = t[best], c = t[(best + 1) % 3], o = t[(best + 2) % 3];
+      const m = mid.get(edgeKey(a, c, nv))!;
+      cut([a, m, o], tag);
+      cut([m, c, o], tag);
+    };
+    for (let i = 0; i < w.tris.length; i += 3) cut([w.tris[i], w.tris[i + 1], w.tris[i + 2]], w.origin ? w.origin[i / 3] : -1);
+    w.pos = pos;
+    w.tris = tris;
+    if (origin) w.origin = origin;
+    added += mid.size;
+  }
+  return added;
+}
 
 /** Merges vertices closer than `tol` (all vertices, or only those on open edges). */
 function weld(w: Work, tol: number, boundaryOnly: boolean): number {
