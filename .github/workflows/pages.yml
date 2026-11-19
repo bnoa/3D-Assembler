@@ -1,0 +1,54 @@
+# Publishes the web version (the "Open in your browser" button) on GitHub Pages at each push on main.
+name: Web version
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Dependencies
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: '1' # the web version does not need Electron
+        run: |
+          # The local store paths of pnpm-workspace.yaml only exist on the author's machine.
+          printf 'onlyBuiltDependencies:\n  - electron\n' > pnpm-workspace.yaml
+          pnpm install --frozen-lockfile=false
+      - name: Build
+        run: pnpm exec vite build
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

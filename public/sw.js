@@ -2,8 +2,9 @@
 // Pages: network first (new versions show up at once), the cached copy when offline.
 // Other same-origin files (scripts, styles, WASM, icons; their names carry a content hash):
 // cache first, filled as they are used, and refreshed in the background.
-const CACHE = 'assembler-v1';
-const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
+const CACHE = 'assembler-v2';
+const ROOT = new URL('./', self.location).href; // the folder of the app
+const SHELL = [ROOT, ROOT + 'manifest.webmanifest', ROOT + 'icons/icon-192.png', ROOT + 'icons/icon-512.png'];
 
 self.addEventListener('install', (e) => {
   e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
@@ -24,8 +25,8 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req)
-        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put('/', copy)); return res; })
-        .catch(() => caches.match('/')),
+        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(ROOT, copy)); return res; })
+        .catch(() => caches.match(ROOT)),
     );
     return;
   }

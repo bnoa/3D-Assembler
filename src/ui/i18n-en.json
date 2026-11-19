@@ -237,7 +237,7 @@
   "trop grand pour le plateau": "too large for the plate",
   "Angle de surplomb": "Overhang angle",
   "Épaisseur minimale": "Minimum thickness",
-  "Agrandit l’objet pour que son mur le plus fin atteigne l’épaisseur minimale (comme 3D Builder)": "Enlarges the object so its thinnest wall reaches the minimum thickness (like 3D Builder)",
+  "Agrandit l’objet pour que son mur le plus fin atteigne l’épaisseur minimale": "Enlarges the object so its thinnest wall reaches the minimum thickness",
   "{0}<span>Épaissir</span>": "{0}<span>Thicken</span>",
   "Appliquer": "Apply",
   "Choisissez une image dans Sélectionné. En Pinceau, cliquez sur une zone de l’objet pour l’en recouvrir ; en Sticker, cliquez à l’endroit où poser l’autocollant.": "Choose an image in Selected. In Brush, click an area of the object to cover it; in Sticker, click where to place the sticker.",

@@ -1395,7 +1395,7 @@ export const MODES: Record<string, ModeSpec> = {
         h('span', { class: 'vsep' }),
         stats,
         h('button', {
-          class: 'act', title: 'Agrandit l’objet pour que son mur le plus fin atteigne l’épaisseur minimale (comme 3D Builder)',
+          class: 'act', title: 'Agrandit l’objet pour que son mur le plus fin atteigne l’épaisseur minimale',
           html: `${icon('scale', 22)}<span>Épaissir</span>`,
           onclick: () => thicken(ctx, s.wall),
         }),

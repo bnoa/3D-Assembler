@@ -18,6 +18,7 @@ Free, open source, works offline. Inspired by Microsoft 3D Builder.
 <a href="../../releases/latest/download/3D-Assembler-Setup-x64.exe"><img src="docs/images/download-windows.svg" alt="Download for Windows" height="56"></a>
 <a href="../../releases/latest/download/3D-Assembler-macOS.dmg"><img src="docs/images/download-macos.svg" alt="Download for macOS" height="56"></a>
 <a href="../../releases/latest/download/3D-Assembler-Linux-x64.AppImage"><img src="docs/images/download-linux.svg" alt="Download for Linux" height="56"></a>
+<a href="https://bnoa.github.io/3D-Assembler/"><img src="docs/images/download-web.svg" alt="Open in your browser" height="56"></a>
 
 <sub>No account, no upload: everything stays on your computer. <a href="../../releases/latest">All downloads and release notes</a></sub>
 
@@ -71,7 +72,7 @@ The workflow will feel familiar (ribbon, build plate, automatic repair, editing 
 
 The installers are not signed, which is why the systems show a warning the first time.
 
-You can also use 3D Assembler in a browser (Chrome or Edge) and install it from there: the browser offers **Install** in its address bar, or use **Install the app** in the ☰ menu.
+You can also [use 3D Assembler in your browser](https://bnoa.github.io/3D-Assembler/), with nothing to install. Your files are opened on your computer and never uploaded. In Chrome or Edge you can then install it as an app: the browser offers **Install** in its address bar, or use **Install the app** in the ☰ menu.
 
 **Language.** The interface follows your system language (English, or French on a French system). Change it in ☰ > **Settings** > **Language**.
 
@@ -106,7 +107,7 @@ Then open the address shown (by default http://localhost:5173).
 | `npx pnpm@10 desktop` | Desktop app (Electron), without installing |
 | `npx pnpm@10 dist:win` | Windows installer in `release/` (`dist:mac` and `dist:linux` on their own system) |
 
-The GitHub Actions workflow **Installers** (`.github/workflows/installers.yml`) builds the three installers and attaches them to a release when a `v*` tag is pushed.
+The GitHub Actions workflow **Installers** (`.github/workflows/installers.yml`) builds the three installers and attaches them to a release when a `v*` tag is pushed. The workflow **Web version** (`.github/workflows/pages.yml`) publishes the browser version on GitHub Pages at each push on `main`.
 
 To keep packages out of a synced folder (OneDrive, Dropbox…), set `store-dir` and `virtual-store-dir` in a local `.npmrc` (ignored by git).
 

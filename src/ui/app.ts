@@ -1269,7 +1269,7 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     const tile = (label: string, ico: string, fn: () => void, wide = false) =>
       h('button', { class: `tile${wide ? ' wide' : ''}`, onclick: fn, html: `${icon(ico, 40)}<span>${label}</span>` });
     this.home.replaceChildren(h('div', { class: 'wrap' },
-      h('div', { class: 'logo', html: '<img src="/icons/icon-192.png" alt="" width="64" height="64"><span><b>3D</b> Assembler</span>' }),
+      h('div', { class: 'logo', html: `<img src="${import.meta.env.BASE_URL}icons/icon-192.png" alt="" width="64" height="64"><span><b>3D</b> Assembler</span>` }),
       h('div', { class: 'tiles' },
         // As 3D Builder's home: En savoir plus (tall), Nouvelle scène, Ouvrir (wide), then recent files.
         Object.assign(tile('En savoir plus', 'help', () => this.showHelp()), { className: 'tile tall' }),

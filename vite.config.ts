@@ -2,6 +2,8 @@
 import { defineConfig } from 'vite';
 
 export default defineConfig({
+  // Relative paths: the same build works at a site root, in a sub-folder (GitHub Pages) and in the desktop app.
+  base: './',
   // manifold-3d ships its own WASM loader; pre-bundling breaks its file lookup.
   optimizeDeps: { exclude: ['manifold-3d'] },
   build: { target: 'es2022', chunkSizeWarningLimit: 2000 },

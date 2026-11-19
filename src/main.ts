@@ -9,7 +9,7 @@ void loadManifold(wasmUrl);
 // Installed app: the service worker keeps it working offline (built version only; the dev server
 // serves fresh files).
 if (import.meta.env.PROD && 'serviceWorker' in navigator && !('assemblerDesktop' in window)) {
-  window.addEventListener('load', () => { void navigator.serviceWorker.register('/sw.js').catch(() => {}); });
+  window.addEventListener('load', () => { void navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => {}); });
 }
 
 const root = document.getElementById('app')!;
