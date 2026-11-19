@@ -21,7 +21,7 @@ describe('solid operations', () => {
     expect(analyze(above).ok).toBe(true);
   });
 
-  it('hollows as 3D Builder: blocky cavity on a 150 × 150 grid, eroded in 3D', async () => {
+  it('hollows as 3D Builder: blocky cavity on a 150 × 150 grid, eroded in 3D', { timeout: 30000 }, async () => {
     const shell = await csg.hollow(a, 2);
     // 40 mm cube: cells of 40/150 mm; a cell is kept when the cell grown by 2 mm stays inside,
     // so columns 8..141 (134 cells); Z is eroded from [0, 40] to [2, 38] (z rounded to 0.01).

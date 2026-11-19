@@ -654,7 +654,7 @@ export class App {
     this.doc.reset();
     this.dropBackup();
     this.home.classList.add('hidden');
-    this.view.frame(null);
+    this.view.resetCamera();
   }
 
   async openFiles(replace = false): Promise<void> {
@@ -807,6 +807,7 @@ export class App {
     const o = this.doc.addWorldMesh(makePrimitive(kind), { dropOnPlate: true, color: PRIMITIVE_COLORS[kind], name: `${currentLang() === 'en' ? toEnglish(label) : label}${this.doc.objects.length + 1}` });
     this.home.classList.add('hidden');
     this.doc.select([o.id]);
+    this.frameAll(); // 3D Builder frames the inserted shape
   }
 
   /** Prints the current 3D view with the scene's name and object sizes (browser print dialog). */

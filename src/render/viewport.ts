@@ -6,9 +6,9 @@ import {
   RepeatWrapping, ClampToEdgeWrapping, DataTexture, LinearFilter, LinearMipmapLinearFilter, Scene, ShadowMaterial, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
   GridHelper, Quaternion,
 } from 'three';
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
+import { CameraControls, MAX_FOV, VIEW_PLATE, defaultPose, frameBox } from './camera-controls';
 import type { MeshData } from '../core/mesh-data';
 import { type SceneDocument, type SceneObject, type Vec3, isValid, objectMatrix } from '../core/model';
 import { detentAngle, snapAxis, snapCandidates } from '../geometry/align-snap';
@@ -54,7 +54,7 @@ export class Viewport {
   readonly renderer: WebGLRenderer;
   readonly scene = new Scene();
   readonly camera: PerspectiveCamera;
-  readonly orbit: OrbitControls;
+  readonly orbit: CameraControls;
   readonly gizmo: TransformControls;
   settings: ViewSettings = {
     shading: true, shadows: true, colors: true, reflections: true,
@@ -91,16 +91,10 @@ export class Viewport {
 
     this.scene.background = new Color('#4a4d52');
     this.scene.fog = new Fog('#4a4d52', 500, 1400);
-    this.camera = new PerspectiveCamera(40, 1, 1, 5000);
-    this.camera.position.set(0, -260, 170);
-
-    this.orbit = new OrbitControls(this.camera, this.renderer.domElement);
-    this.orbit.target.set(0, 0, 20);
-    this.orbit.enableDamping = true;
-    this.orbit.maxPolarAngle = Math.PI * 0.495;
-    this.orbit.minDistance = 20;
-    this.orbit.maxDistance = 1500;
+    this.camera = new PerspectiveCamera((MAX_FOV * 180) / Math.PI, 1, 1, 5000);
+    this.orbit = new CameraControls(this.camera, this.renderer.domElement, () => this.fullView());
     this.orbit.addEventListener('change', () => this.invalidate());
+    this.resetCamera();
 
     this.gizmo = new TransformControls(this.camera, this.renderer.domElement);
     this.gizmo.setSize(0.9);
@@ -130,6 +124,7 @@ export class Viewport {
     this.scene.add(this.overlay);
 
     new ResizeObserver(() => this.resize()).observe(host);
+    window.addEventListener('resize', () => this.resize());
     this.resize();
     this.bindPointer();
     doc.on(() => this.sync());
@@ -148,10 +143,22 @@ export class Viewport {
     this.needsRender = true;
   }
 
+  /**
+   * Area the 3D view stands for: 3D Builder draws its view over the whole window, under the ribbon
+   * and the side panel, so the projection centre is the window's centre, not the visible part's.
+   */
+  private fullView(): { w: number; h: number; x: number; y: number } {
+    const r = this.host.getBoundingClientRect();
+    const w = Math.max(window.innerWidth, r.right, 1), h = Math.max(window.innerHeight, r.bottom, 1);
+    return { w, h, x: Math.max(0, r.left), y: Math.max(0, r.top) };
+  }
+
   private resize(): void {
     const w = this.host.clientWidth || 1, h = this.host.clientHeight || 1;
     this.renderer.setSize(w, h);
-    this.camera.aspect = w / h;
+    const full = this.fullView();
+    this.camera.aspect = full.w / full.h;
+    this.camera.setViewOffset(full.w, full.h, full.x, full.y, w, h);
     this.camera.updateProjectionMatrix();
     this.invalidate();
   }
@@ -661,7 +668,7 @@ export class Viewport {
     const sel = this.doc.objects.filter((o) => moving.has(o.id)).map((o) => this.boxOf(o, o.position));
     const c = sel.reduce((b, x) => b.union(x), new Box3()).getCenter(new Vector3());
     const dist = c.distanceTo(this.camera.position);
-    const visible = 2 * dist * Math.tan((this.camera.fov * Math.PI) / 360);
+    const visible = 2 * dist * Math.tan((this.camera.fov * Math.PI) / 360) * (this.host.clientHeight / this.fullView().h);
     return { cands: snapCandidates(others.map((b) => ({ min: b.min.toArray(), max: b.max.toArray() }))), threshold: 0.01 * visible };
   }
 
@@ -729,14 +736,22 @@ export class Viewport {
 
   // --- camera ------------------------------------------------------------------------------------
 
-  frame(box: { min: Vec3; max: Vec3 } | null): void {
-    const c = box ? new Vector3((box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, (box.min[2] + box.max[2]) / 2) : new Vector3(0, 0, 20);
-    const r = box ? Math.max(30, new Vector3(...box.max).sub(new Vector3(...box.min)).length() / 2) : 80;
-    const dir = this.camera.position.clone().sub(this.orbit.target).normalize();
-    const dist = r / Math.sin((this.camera.fov * Math.PI) / 360) * 1.1;
-    this.orbit.target.copy(c);
-    this.camera.position.copy(c).add(dir.multiplyScalar(dist));
+  /**
+   * Frames a box (or the plate when null) from the front, as 3D Builder's "Centrer la vue": the
+   * view direction is reset and the camera glides there in 0.75 s (at once with `instant`).
+   */
+  frame(box: { min: Vec3; max: Vec3 } | null, instant = false): void {
+    this.resize();
+    const p = frameBox(box ?? VIEW_PLATE, this.camera.aspect);
+    if (instant) this.orbit.setPose(p.eye, p.target, p.fov);
+    else this.orbit.animateTo(p.eye, p.target, p.fov);
     this.invalidate();
+  }
+
+  /** 3D Builder's startup view of an empty scene. */
+  resetCamera(): void {
+    const p = defaultPose();
+    this.orbit.setPose(p.eye, p.target, p.fov);
   }
 
   /** Live transform of an object (from the gizmo or a drag) before it is committed. */
