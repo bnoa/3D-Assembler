@@ -6,7 +6,7 @@ import { type MeshData, bounds, merged, transformed, triCount } from '../core/me
 import { hexToInt, intToHex, paintRegion } from '../geometry/paint';
 import { SIMPLIFY_MAX_PASSES, simplifyPasses } from '../geometry/simplify-passes';
 import { makePrimitive } from '../geometry/primitives';
-import { settleRotation } from '../geometry/settle';
+import { SETTLE_DT, type SettlePose, SettleSim } from '../geometry/settle';
 import { snapOnFloor, snapOnTriangle } from '../geometry/measure-snap';
 import { CUSTOM_COLOR, CUSTOM_SHAPES, dynamicMax, makeCustom } from '../geometry/custom';
 import { smoothTool } from '../geometry/smooth';
@@ -392,96 +392,94 @@ export const MODES: Record<string, ModeSpec> = {
   position: {
     okLabel: 'Positionner',
     build(ctx) {
-      // 3D Builder's Positionner: dragging an object lifts it above the plate and turns it like a
-      // trackball; on release it falls and comes to rest (the same settling as Poser à plat).
+      // 3D Builder's Positionner: the selection is one rigid body in a live simulation
+      // (geometry/settle.ts) running in real time while the tool is open. Pressing on it takes hold of
+      // the point under the pointer; that point is then pulled across the plane facing the camera
+      // through it, so the object follows the cursor, turning about its centre, and stops when the
+      // cursor stops. Released, it falls and comes to rest where it was dropped. Each drop is a step
+      // of the bar's Annuler / Refaire.
       const view = ctx.app.view;
-      type Item = { base: MeshData; hull: V3[]; q: Matrix4; radius: number };
-      const items: Item[] = [];
-      const ready = Promise.all(ctx.world.map(async (w) => {
-        const hull = await csg.hullPoints(w);
-        const b = bounds(w);
-        const radius = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2 || 1;
-        return { base: w, hull, q: new Matrix4(), radius };
-      })).then((r) => { items.push(...r); });
-      const hullOf = (it: Item, q: Matrix4) => it.hull.map((p) => new Vector3(...p).applyMatrix4(q));
-      const centreOf = (pts: Vector3[]) => {
-        const lo = pts.reduce((a, p) => a.min(p), pts[0].clone()), hi = pts.reduce((a, p) => a.max(p), pts[0].clone());
-        return lo.add(hi).multiplyScalar(0.5);
-      };
-      let drag: { i: number; x: number; y: number; q0: Matrix4; c: Vector3; lift: number } | null = null;
-      const draw = () => {
-        view.setHidden(ctx.selection.map((o) => o.id));
-        view.showPreview(items.map((it, i) => {
-          let q = it.q;
-          if (drag && drag.i === i) q = new Matrix4().makeTranslation(0, 0, drag.lift).multiply(q);
-          return { mesh: transformed(it.base, q.elements), color: ctx.selection[i].color, faceColors: ctx.selection[i].faceColors };
-        }));
-      };
-      void ready.then(draw);
-      set(ctx, 'items', items);
-      const past: Matrix4[][] = [], future: Matrix4[][] = [];
-      const snap = () => items.map((it) => it.q.clone());
-      const restore = (qs: Matrix4[]) => { qs.forEach((q, i) => { items[i].q = q.clone(); }); set(ctx, 'changed', true); draw(); };
+      let sim: SettleSim | null = null;
+      let alive = true;
+      set(ctx, 'sim', null);
+      view.setHidden(ctx.selection.map((o) => o.id));
+      view.showPreview(ctx.world.map((w, i) => ({ mesh: w, color: ctx.selection[i].color, faceColors: ctx.selection[i].faceColors })));
+      void Promise.all(ctx.world.map((w) => csg.hullPoints(w))).then((hulls) => {
+        if (!alive) return;
+        sim = new SettleSim(ctx.world, hulls.flat());
+        set(ctx, 'sim', sim);
+        view.setPreviewTransform(sim.matrix());
+      });
+      // Real-time stepping as 3D Builder's timer: a tick of 32 substeps every 40 ms.
+      const TICK = 32 * SETTLE_DT;
+      let last = performance.now(), acc = 0, shown = '';
+      const timer = window.setInterval(() => {
+        const now = performance.now();
+        acc = Math.min(acc + (now - last) / 1000, 0.25);
+        last = now;
+        if (!sim) return;
+        while (acc >= TICK) { sim.advance(TICK, 32); acc -= TICK; }
+        const m = sim.matrix();
+        const key = m.map((x) => x.toFixed(5)).join();
+        if (key !== shown) { shown = key; view.setPreviewTransform(m); }
+      }, TICK * 1000);
+      // History of the drops: the pose when grabbed and the pose when released (it falls again on redo).
+      type Drop = { before: SettlePose; after: SettlePose };
+      const past: Drop[] = [], future: Drop[] = [];
+      let before: SettlePose | null = null;
+      let plane: Vector3 | null = null; // the pulled point, unclamped
       ctx.history = {
-        undo() { const s = past.pop(); if (s) { future.push(snap()); restore(s); } },
-        redo() { const s = future.pop(); if (s) { past.push(snap()); restore(s); } },
+        undo() { const d = past.pop(); if (d && sim) { future.push(d); plane = null; sim.setPose(d.before); } },
+        redo() { const d = future.pop(); if (d && sim) { past.push(d); plane = null; sim.setPose(d.after); } },
       };
       view.toolPointer = {
         down(ev) {
-          if (!items.length) return false;
-          const i = view.pickOverlay(ev);
-          if (i === null) return false;
-          const it = items[i];
-          past.push(snap());
-          future.length = 0;
-          const pts = hullOf(it, it.q);
-          // Lifted so that it can turn freely without going through the plate.
-          const c = centreOf(pts);
-          drag = { i, x: ev.clientX, y: ev.clientY, q0: it.q.clone(), c, lift: Math.max(0, it.radius * 1.5 - c.z) };
-          draw();
+          if (!sim) return false;
+          const hit = view.hitOverlay(ev);
+          if (!hit) return false;
+          before = sim.pose();
+          sim.grab(hit.point);
+          plane = new Vector3(...hit.point);
           return true;
         },
         move(ev) {
-          if (!drag) return;
-          const dx = ev.clientX - drag.x, dy = ev.clientY - drag.y;
-          const len = Math.hypot(dx, dy);
-          const it = items[drag.i];
-          if (len < 1) { it.q = drag.q0.clone(); draw(); return; }
-          // Trackball: horizontal motion turns about the camera's up axis, vertical about its right axis.
-          const cam = view.camera.matrixWorld.elements;
-          const right = new Vector3(cam[0], cam[1], cam[2]), up = new Vector3(cam[4], cam[5], cam[6]);
-          const axis = up.multiplyScalar(dx).add(right.multiplyScalar(dy)).normalize();
-          const c = drag.c;
-          const r = new Matrix4().makeTranslation(c.x, c.y, c.z).multiply(new Matrix4().makeRotationAxis(axis, len * 0.01)).multiply(new Matrix4().makeTranslation(-c.x, -c.y, -c.z));
-          it.q = r.multiply(drag.q0);
-          draw();
+          if (!sim || !plane || !sim.held) return;
+          const { origin, direction } = view.rayAt(ev);
+          const n = view.camera.getWorldDirection(new Vector3());
+          const den = n.dot(direction);
+          if (Math.abs(den) < 1e-9) return;
+          plane = origin.addScaledVector(direction, n.dot(plane.clone().sub(origin)) / den);
+          sim.pull([plane.x, plane.y, plane.z]);
         },
         up() {
-          if (!drag) return;
-          const it = items[drag.i];
-          drag = null;
-          // Fall and settle, then rest on the plate.
-          const mesh = transformed(it.base, it.q.elements);
-          const { R, pivot: p } = settleRotation(mesh, hullOf(it, it.q).map((v) => [v.x, v.y, v.z] as V3));
-          const rot = new Matrix4().set(R[0], R[1], R[2], 0, R[3], R[4], R[5], 0, R[6], R[7], R[8], 0, 0, 0, 0, 1);
-          let q = new Matrix4().makeTranslation(p[0], p[1], p[2]).multiply(rot).multiply(new Matrix4().makeTranslation(-p[0], -p[1], -p[2])).multiply(it.q);
-          const zmin = Math.min(...hullOf(it, q).map((v) => v.z));
-          q = new Matrix4().makeTranslation(0, 0, -zmin).multiply(q);
-          it.q = q;
-          set(ctx, 'changed', true);
-          draw();
+          if (!sim || !plane) return;
+          plane = null;
+          sim.release();
+          if (before) { past.push({ before, after: sim.pose() }); future.length = 0; before = null; }
         },
       };
-      ctx.bar.append(h('div', { class: 'stat', style: 'text-align:left' }, 'Faites glisser un objet pour le faire basculer : il retombe sur le plateau.'));
-      return () => { view.toolPointer = null; };
+      // 3D Builder's bar has only its buttons (Annuler, Positionner, Annuler / Refaire).
+      return () => {
+        alive = false;
+        window.clearInterval(timer);
+        view.toolPointer = null;
+        view.setPreviewTransform(null);
+      };
     },
     async apply(ctx) {
-      const items = st<{ base: MeshData; q: Matrix4 }[]>(ctx, 'items', []);
-      if (!st(ctx, 'changed', false) || items.length !== ctx.selection.length) return true;
-      // The tumbles go into each object's rotation and position, as in 3D Builder.
+      const sim = st<SettleSim | null>(ctx, 'sim', null);
+      if (!sim) return true;
+      // A residual sinking into the plate is taken out.
+      const z = sim.bottom();
+      if (Math.abs(z) < sim.size * 1e-3) sim.t[2] -= z;
+      const I = [1, 0, 0, 0, 1, 0, 0, 0, 1];
+      const moved = sim.R.some((x, i) => Math.abs(x - I[i]) > 1e-7) || Math.hypot(...sim.t) > sim.size * 1e-7;
+      if (!moved) return true;
+      // The motion goes into each object's rotation and position, as in 3D Builder.
+      const q = new Matrix4().fromArray(sim.matrix());
       const doc = ctx.app.doc;
       doc.checkpoint();
-      ctx.selection.forEach((o, i) => doc.update(o.id, movedTransform(o, items[i].q)));
+      ctx.selection.forEach((o) => doc.update(o.id, movedTransform(o, q)));
       doc.emit();
       return true;
     },

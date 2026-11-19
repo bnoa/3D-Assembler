@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { centreOfMass, settleRotation } from '../src/geometry/settle';
+import { SETTLE_DT, SettleSim, centreOfMass, settleRotation } from '../src/geometry/settle';
 import { makePrimitive } from '../src/geometry/primitives';
 import { type MeshData, bounds, translated } from '../src/core/mesh-data';
 import { analyzePrint } from '../src/analysis/printability';
@@ -64,5 +64,50 @@ describe('print checks (3D Builder rules)', () => {
     // A face tilted 50° from vertical-down counts at 45° but not at 30°.
     const tilted = translated(rotX(makePrimitive('cube'), 40), 0, 0, 60);
     expect(analyzePrint(tilted, { overhangAngle: 45 }).overhangFaces.length).toBeGreaterThan(analyzePrint(tilted, { overhangAngle: 30 }).overhangFaces.length);
+  });
+});
+
+describe('Positionner (3D Builder Place: live rigid-body simulation)', () => {
+  const heightOf = (s: SettleSim, m: MeshData) => {
+    const pts = hull(m).map((p) => { const R = s.R; return R[6] * p[0] + R[7] * p[1] + R[8] * p[2] + s.t[2]; });
+    return Math.max(...pts) - Math.min(...pts);
+  };
+
+  it('a cube resting on the plate does not move', () => {
+    const c = makePrimitive('cube');
+    const s = new SettleSim([c], hull(c));
+    s.advance(1, 1000);
+    expect(s.bottom()).toBeCloseTo(0, 1);
+    expect(Math.abs(s.t[0]) + Math.abs(s.t[1])).toBeLessThan(0.05);
+    expect(s.R[8]).toBeCloseTo(1, 4);
+  });
+
+  it('a tilted cube dropped from above falls and comes to rest on a face within a second', () => {
+    const c = translated(rotX(makePrimitive('cube'), 25), 0, 0, 30);
+    const s = new SettleSim([c], hull(c));
+    s.t = [0, 0, 30 + s.t[2]];
+    s.advance(1, Math.round(1 / SETTLE_DT));
+    expect(heightOf(s, c)).toBeCloseTo(40, 0);
+    expect(s.bottom()).toBeGreaterThan(-0.5);
+  });
+
+  it('held, the grab point follows the target and stops when it stops; released, it falls', () => {
+    const c = makePrimitive('cube');
+    const s = new SettleSim([c], hull(c));
+    const top = Math.max(...hull(c).map((p) => p[2])) + s.t[2];
+    s.grab([0, -20, top]); // front top edge
+    s.pull([0, -20, top + 20]); // straight up first
+    s.advance(0.04);
+    for (let k = 1; k <= 10; k++) { s.pull([3 * k, -20, top + 20]); s.advance(0.04); }
+    expect(Math.hypot(s.anchor[0] - 30, s.anchor[1] + 20, s.anchor[2] - top - 20)).toBeLessThan(0.5);
+    const held = s.pose();
+    s.advance(0.2);
+    expect(Math.hypot(...s.t.map((x, i) => x - held.t[i]))).toBeLessThan(1e-3);
+    expect(s.bottom()).toBeGreaterThan(1);
+    s.release();
+    s.advance(1, Math.round(1 / SETTLE_DT));
+    expect(s.bottom()).toBeCloseTo(0, 0);
+    expect(heightOf(s, c)).toBeCloseTo(40, 0);
+    expect(s.centre()[0]).toBeGreaterThan(5); // where it was dropped, not back home
   });
 });

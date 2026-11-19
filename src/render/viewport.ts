@@ -390,6 +390,15 @@ export class Viewport {
     this.invalidate();
   }
 
+  /** Moves the whole tool preview by a world transform (column-major 4 × 4), or back in place. */
+  setPreviewTransform(m: ArrayLike<number> | null): void {
+    this.overlay.matrixAutoUpdate = !m;
+    if (m) this.overlay.matrix.fromArray(m);
+    else { this.overlay.position.set(0, 0, 0); this.overlay.quaternion.identity(); this.overlay.scale.set(1, 1, 1); this.overlay.updateMatrix(); }
+    this.overlay.updateMatrixWorld(true);
+    this.invalidate();
+  }
+
   addOverlay(o: Object3D): void {
     this.overlay.add(o);
     this.invalidate();
