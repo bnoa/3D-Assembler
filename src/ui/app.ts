@@ -1258,7 +1258,7 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     this.dialog('À propos', [
       h('p', {}, '3D Assembler 0.1 : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.'),
       h('p', {}, 'Logiciel libre et indépendant, sous licence MIT. Il n’est ni affilié à Microsoft Corporation, ni approuvé, ni soutenu par elle. Microsoft, Windows et 3D Builder sont des marques du groupe Microsoft. Le code est écrit de zéro et reproduit des comportements : il ne contient aucun code de Microsoft, ni copié ni traduit, ni aucun de ses modèles, textures ou images.'),
-      h('p', {}, h('a', { href: 'https://learn.microsoft.com/fr-fr/windows/whats-new/deprecated-features', target: '_blank', rel: 'noopener' }, 'Annonce de la fin de 3D Builder par Microsoft')),
+      h('p', {}, h('a', { href: 'https://learn.microsoft.com/windows/whats-new/deprecated-features', target: '_blank', rel: 'noopener' }, 'Annonce de la fin de 3D Builder par Microsoft')),
       h('p', { style: 'color:var(--text-dim)' }, 'Rendu three.js, opérations solides manifold-3d.'),
     ]);
   }

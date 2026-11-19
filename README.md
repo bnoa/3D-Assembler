@@ -67,12 +67,16 @@ The workflow will feel familiar (ribbon, build plate, automatic repair, editing 
 | System | File | First launch |
 |---|---|---|
 | Windows 10 / 11 | `3D-Assembler-Setup-x64.exe` | Windows SmartScreen may warn about an unknown publisher: click **More info**, then **Run anyway**. |
-| macOS 11 or later | `3D-Assembler-macOS.dmg` | Drag the app to Applications. The first time, right-click it and choose **Open**, then confirm. |
+| macOS 11 or later | `3D-Assembler-macOS.dmg` | Drag the app to Applications and open it. macOS says it cannot check the app: close the message, open **System Settings** > **Privacy & Security**, and click **Open Anyway** next to 3D Assembler (once). |
 | Linux (x64) | `3D-Assembler-Linux-x64.AppImage` | Make the file executable (right-click > Properties > Allow executing, or `chmod +x`), then open it. A `.deb` package is also on the release page. |
 
 The installers are not signed, which is why the systems show a warning the first time.
 
 You can also [use 3D Assembler in your browser](https://bnoa.github.io/3D-Assembler/), with nothing to install. Your files are opened on your computer and never uploaded. In Chrome or Edge you can then install it as an app: the browser offers **Install** in its address bar, or use **Install the app** in the ☰ menu.
+
+**Uninstalling.** Windows: **Settings** > **Apps** > 3D Assembler > **Uninstall**. macOS: drag the app from Applications to the Trash. Linux: delete the AppImage (or `sudo apt remove 3d-assembler` for the `.deb`).
+
+**Privacy.** 3D Assembler has no account, no telemetry and no ads. It does not transfer any information to other networked systems unless specifically requested (for example when you click a link to a web page).
 
 **Language.** The interface follows your system language (English, or French on a French system). Change it in ☰ > **Settings** > **Language**.
 
