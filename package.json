@@ -1,0 +1,127 @@
+{
+  "name": "3d-assembler",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "desktop": "vite build && electron .",
+    "dist:win": "vite build && electron-builder --win",
+    "dist:mac": "vite build && electron-builder --mac",
+    "dist:linux": "vite build && electron-builder --linux"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "manifold-3d": "3.5.5",
+    "straight-skeleton": "^3.0.0",
+    "three": "0.187.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/three": "0.187.0",
+    "@xmldom/xmldom": "0.9.12",
+    "electron": "45.2.3",
+    "electron-builder": "26.18.0",
+    "typescript": "5.9.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  },
+  "description": "Free, open-source tool to prepare 3D models for printing, inspired by Microsoft 3D Builder.",
+  "author": "3D Assembler contributors",
+  "main": "electron/main.cjs",
+  "build": {
+    "appId": "app.assembler3d.desktop",
+    "productName": "3D Assembler",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "dist/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "icon": "build/icon.png",
+    "fileAssociations": [
+      {
+        "ext": "3mf",
+        "name": "3MF model",
+        "role": "Editor"
+      },
+      {
+        "ext": "stl",
+        "name": "STL model",
+        "role": "Editor"
+      },
+      {
+        "ext": "obj",
+        "name": "OBJ model",
+        "role": "Editor"
+      },
+      {
+        "ext": "ply",
+        "name": "PLY model",
+        "role": "Editor"
+      },
+      {
+        "ext": "glb",
+        "name": "glTF binary model",
+        "role": "Editor"
+      },
+      {
+        "ext": "gltf",
+        "name": "glTF model",
+        "role": "Editor"
+      },
+      {
+        "ext": "wrl",
+        "name": "VRML model",
+        "role": "Editor"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "3D Assembler",
+      "artifactName": "3D-Assembler-Setup-x64.${ext}"
+    },
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.graphics-design",
+      "artifactName": "3D-Assembler-macOS.${ext}"
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "category": "Graphics",
+      "maintainer": "3D Assembler contributors",
+      "artifactName": "3D-Assembler-Linux-${arch}.${ext}"
+    }
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,70 @@
+{
+  "name": "3D Assembler",
+  "short_name": "3D Builder",
+  "description": "Create, edit, repair and prepare 3D models for printing.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "lang": "en",
+  "background_color": "#2c2e32",
+  "theme_color": "#26457f",
+  "categories": [
+    "graphics",
+    "productivity",
+    "utilities"
+  ],
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ],
+  "file_handlers": [
+    {
+      "action": "/",
+      "accept": {
+        "model/3mf": [
+          ".3mf"
+        ],
+        "model/stl": [
+          ".stl"
+        ],
+        "model/obj": [
+          ".obj"
+        ],
+        "application/x-ply": [
+          ".ply"
+        ],
+        "model/gltf-binary": [
+          ".glb"
+        ],
+        "model/gltf+json": [
+          ".gltf"
+        ],
+        "model/vrml": [
+          ".wrl"
+        ]
+      },
+      "launch_type": "single-client"
+    }
+  ],
+  "launch_handler": {
+    "client_mode": "focus-existing"
+  }
+}

@@ -1,0 +1,3 @@
+# Electron downloads its runtime in a postinstall script (pnpm 10 runs only the scripts listed here).
+onlyBuiltDependencies:
+  - electron

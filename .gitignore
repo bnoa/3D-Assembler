@@ -1,0 +1,8 @@
+node_modules
+dist
+*.log
+release
+docs/prive/
+research/
+.claude/
+.npmrc
