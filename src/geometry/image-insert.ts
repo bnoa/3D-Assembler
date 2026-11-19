@@ -108,13 +108,13 @@ async function contourSolidBuilder(px: ImageData, o: ImageInsertOptions): Promis
 }
 
 /** Min corner to the origin, long side (x or y, or `span` if given) scaled to `width` mm. */
-function normalise(m: MeshData, width: number, span?: number): MeshData {
-  const p = m.positions;
+function normalise(m: MeshData, width: number, span?: number, frame: MeshData = m): MeshData {
+  const p = frame.positions;
   const lo = [Infinity, Infinity, Infinity], hi = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < p.length; i++) { lo[i % 3] = Math.min(lo[i % 3], p[i]); hi[i % 3] = Math.max(hi[i % 3], p[i]); }
   const s = width / (span ?? (Math.max(hi[0] - lo[0], hi[1] - lo[1]) || 1));
-  const out = new Float32Array(p.length);
-  for (let i = 0; i < p.length; i++) out[i] = (p[i] - (i % 3 === 2 ? 0 : lo[i % 3])) * s;
+  const q = m.positions, out = new Float32Array(q.length);
+  for (let i = 0; i < q.length; i++) out[i] = (q[i] - (i % 3 === 2 ? 0 : lo[i % 3])) * s;
   return { positions: out, indices: m.indices };
 }
 
@@ -219,25 +219,32 @@ function heights(data: Uint8ClampedArray, w: number, h: number, mode: 'height' |
   return H;
 }
 
-/** Separable Gaussian, kernel 2r + 1, weights exp(−0.5 (2i / r)²), edges clamped, truncated. */
+/**
+ * Separable Gaussian, kernel 2r + 1, weights exp(−0.5 (2i / r)²) normalised to a sum of 1, edges
+ * clamped. As 3D Builder: single precision, sums taken in kernel order, the horizontal pass kept
+ * unrounded and only the final value truncated to a whole level.
+ */
 function smooth(H: Float64Array, w: number, h: number, r: number): Float64Array {
   if (r < 1) return H;
-  const k = Array.from({ length: 2 * r + 1 }, (_, i) => Math.exp(-0.5 * ((2 * (i - r)) / r) ** 2));
-  const sum = k.reduce((a, b) => a + b, 0);
-  const pass = (src: Float64Array, horizontal: boolean) => {
-    const dst = new Float64Array(src.length);
-    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-      let s = 0;
-      for (let i = -r; i <= r; i++) {
-        const xx = horizontal ? Math.min(w - 1, Math.max(0, x + i)) : x;
-        const yy = horizontal ? y : Math.min(h - 1, Math.max(0, y + i));
-        s += src[yy * w + xx] * k[i + r];
-      }
-      dst[y * w + x] = Math.trunc(s / sum + 1e-9); // truncated; the margin absorbs rounding (765 stays 765)
-    }
-    return dst;
-  };
-  return pass(pass(H, true), false);
+  const f = Math.fround, step = f(2 / r);
+  const k = Array.from({ length: 2 * r + 1 }, (_, i) => { const x = f(f(i - r) * step); return f(Math.exp(f(f(x * x) * -0.5))); });
+  let sum = 0;
+  for (const v of k) sum = f(sum + v);
+  const inv = f(1 / sum);
+  for (let i = 0; i < k.length; i++) k[i] = f(inv * k[i]);
+  const rows = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc = f(acc + f(H[y * w + Math.min(w - 1, Math.max(0, x + i))] * k[i + r]));
+    rows[y * w + x] = acc;
+  }
+  const out = new Float64Array(w * h);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    let acc = 0;
+    for (let i = -r; i <= r; i++) acc = f(acc + f(rows[Math.min(h - 1, Math.max(0, y + i)) * w + x] * k[i + r]));
+    out[y * w + x] = Math.trunc(acc);
+  }
+  return out;
 }
 
 /**
@@ -256,8 +263,12 @@ function relief(H: Float64Array, w: number, h: number, colorOf?: (x: number, y: 
   let lo = Infinity, hi = -Infinity;
   for (const v of H) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
   if (lo0 !== undefined && hi0 !== undefined) { lo = lo0; hi = hi0; }
-  const base = 0.0008 * w, top = 0.0024 * w;
-  const z = (v: number) => (hi > lo ? base + ((v - lo) * (top - base)) / (hi - lo) : top);
+  // In inches and in single precision, as 3D Builder builds it (the simplifier that follows is
+  // sensitive to the last bits): heights base + level × step, step = (top − base) / level range.
+  const f = Math.fround, SP = f(0.01);
+  const base = f(w * f(0.0008)), top = f(w * f(0.0024));
+  const step = hi > lo ? f(f(top - base) / f(hi - lo)) : 0;
+  const z = (v: number) => (hi > lo ? f(f(f(Math.trunc(v - lo)) * step) + base) : top);
   // Built as 3D Builder does (the final simplifier visits vertices in index order, so the order
   // matters): grid point (x, y) at X = 0.01 x, Y = 0.01 (h − y); vertices numbered on first use;
   // faces: top, then walls, then bottom; top and bottom grids shared by the walls.
@@ -265,12 +276,12 @@ function relief(H: Float64Array, w: number, h: number, colorOf?: (x: number, y: 
   const tv = new Int32Array(w * h).fill(-1), low = new Int32Array(w * h).fill(-1);
   const T = (x: number, y: number) => {
     const k = y * w + x;
-    if (tv[k] < 0) { tv[k] = pos.length / 3; pos.push(x * 0.01, (h - y) * 0.01, z(H[k])); }
+    if (tv[k] < 0) { tv[k] = pos.length / 3; pos.push(f(SP * x), f((h - y) * SP), z(H[k])); }
     return tv[k];
   };
   const B = (x: number, y: number) => {
     const k = y * w + x;
-    if (low[k] < 0) { low[k] = pos.length / 3; pos.push(x * 0.01, (h - y) * 0.01, 0); }
+    if (low[k] < 0) { low[k] = pos.length / 3; pos.push(f(SP * x), f((h - y) * SP), 0); }
     return low[k];
   };
   const idx: number[] = [], col: number[] = [];
@@ -384,12 +395,12 @@ export async function insertImage(px: ImageData, o: ImageInsertOptions): Promise
   let lo = Infinity, hi = -Infinity;
   for (const v of raw) { lo = Math.min(lo, v); hi = Math.max(hi, v); }
   const r = relief(H, w, h, o.reducedColors ? (x, y) => hex(colors, y * w + x) : undefined, lo, hi);
-  const mesh = normalise(r.mesh, o.width);
-  // 3D Builder then runs one step of its vertex-merging simplifier at t = 0.0001, edges unlocked and
-  // colours detached (they do not block merges), and without the degenerate-face test (
-  // this gives exactly 3D Builder's 850 and 1 224 faces on the test image), which collapses the flat parts.
+  // 3D Builder then runs one step of its vertex-merging simplifier at t = 0.0001, on the relief still
+  // in inches, edges unlocked and colours detached (they do not block merges), which collapses the
+  // flat parts; the object is scaled to its size afterwards.
   const { simplifyTolerance } = await import('./simplify-passes');
-  const simple = simplifyTolerance(mesh, 1e-4, r.faceColors, false, false, false);
+  const s0 = simplifyTolerance(r.mesh, 1e-4, r.faceColors, false, false);
+  const simple = { mesh: normalise(s0.mesh, o.width, undefined, r.mesh), faceColors: s0.faceColors };
   // 3D Builder leaves zero-area faces there (8 on a 40 × 30 test image), so the object is not
   // valid; 3D Assembler collapses them away and carries the colours over.
   const { cleanMesh } = await import('../repair/repair');

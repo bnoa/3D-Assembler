@@ -334,17 +334,17 @@ export class App {
         break;
       case 'edit':
         items.push(
-          this.rb('Simplifier', 'simplify', () => this.enterMode(MODES.simplify), { disabled: n !== 1 }),
+          this.rb('Simplifier', 'simplify', () => this.enterMode(MODES.simplify), { disabled: !n }),
           this.rb('Fractionner', 'split', () => this.enterMode(MODES.split), { disabled: !n }),
-          this.rb('Lisse', 'smooth', () => this.enterMode(MODES.smooth), { disabled: n !== 1 }),
+          this.rb('Lisse', 'smooth', () => this.enterMode(MODES.smooth), { disabled: !n }),
           this.rb('Relief', 'emboss', () => this.enterMode(MODES.emboss), { disabled: n !== 1, title: 'Texte, forme ou image en relief ou gravé' }),
           this.rb('Extruder vers le bas', 'extrude', () => this.enterMode(MODES.extrudeDown), { disabled: !n }),
           sep(),
           this.rb('Fusionner', 'union', () => this.boolean('union'), { disabled: !n }),
           this.rb('Définir une intersection', 'intersect', () => this.boolean('intersect'), { disabled: n !== 2, title: 'Garde la partie commune des deux objets sélectionnés' }),
-          this.rb('Soustraire', 'subtract', () => this.boolean('subtract'), { disabled: n !== 1, title: 'Retire l’objet sélectionné de tous les objets qu’il touche' }),
+          this.rb('Soustraire', 'subtract', () => this.boolean('subtract'), { disabled: n !== 1 || !this.overlapsOther(sel[0]), title: 'Retire l’objet sélectionné de tous les objets qu’il touche' }),
           sep(),
-          this.rb('Creux', 'hollow', () => this.enterMode(MODES.hollow), { disabled: n !== 1 }),
+          this.rb('Creux', 'hollow', () => this.enterMode(MODES.hollow), { disabled: !n }),
         );
         break;
       case 'paint':
@@ -352,7 +352,7 @@ export class App {
           this.rb('Matériau', 'material', () => this.enterMode(MODES.material), { disabled: !n }),
           sep(),
           this.rb('Couleur', 'color', () => this.enterMode(MODES.color), { disabled: !n, title: 'Peindre une zone de l’objet' }),
-          this.rb('Texture', 'texture', () => this.enterMode(MODES.texture), { disabled: n !== 1, title: 'Appliquer une image comme papier peint' }),
+          this.rb('Texture', 'texture', () => this.enterMode(MODES.texture), { disabled: !n, title: 'Appliquer une image comme papier peint' }),
         );
         break;
       case 'view': {
@@ -824,6 +824,19 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     d.close();
     frame.contentWindow!.onafterprint = () => frame.remove();
     setTimeout(() => frame.contentWindow!.print(), 200);
+  }
+
+  /**
+   * As 3D Builder, Soustraire needs the selected object's box to overlap another object's box
+   * (strictly: boxes that only touch do not count; the test is on boxes, not on the surfaces).
+   */
+  private overlapsOther(o: SceneObject): boolean {
+    const a = worldBounds([o]);
+    return this.doc.objects.some((p) => {
+      if (p.id === o.id) return false;
+      const b = worldBounds([p]);
+      return [0, 1, 2].every((k) => a.min[k] < b.max[k] && b.min[k] < a.max[k]);
+    });
   }
 
   customShapeDialog(): void {

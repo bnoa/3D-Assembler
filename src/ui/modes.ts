@@ -583,16 +583,23 @@ export const MODES: Record<string, ModeSpec> = {
   simplify: {
     okLabel: 'Réduire les faces',
     build(ctx) {
-      const original = triCount(ctx.world[0]);
+      // As 3D Builder, every selected object is simplified, each on its own; the counts are totals.
+      const original = ctx.world.reduce((n, m) => n + triCount(m), 0);
+      // Each object is simplified in its own coordinates (its position does not change the result,
+      // as in 3D Builder), then placed back in the scene.
+      const simplifyAll = () => ctx.selection.map((o) => {
+        const r = simplifyPasses(o.mesh, st(ctx, 'level', 0), o.faceColors);
+        return { mesh: worldMesh({ ...o, mesh: r.mesh }), faceColors: r.faceColors };
+      });
       const now = h('span', {}, String(original));
       const run = previewer(ctx, async () => {
         // As 3D Builder: the slider is a number of passes, 0 to 6, of its own
         // vertex-merging simplifier (simplify-passes.ts); faces keep their colours.
-        const r = simplifyPasses(ctx.world[0], st(ctx, 'level', 0), ctx.selection[0].faceColors);
-        set(ctx, 'result', r);
-        now.textContent = String(triCount(r.mesh));
+        const rs = simplifyAll();
+        set(ctx, 'result', rs);
+        now.textContent = String(rs.reduce((n, r) => n + triCount(r.mesh), 0));
         // 3D Builder draws the mesh's triangles over the object while simplifying.
-        return [{ mesh: r.mesh, color: ctx.selection[0].color, faceColors: r.faceColors }, { mesh: r.mesh, color: '#3a3f46', wireframe: true, onTop: true }];
+        return rs.flatMap((r, i) => [{ mesh: r.mesh, color: ctx.selection[i].color, faceColors: r.faceColors }, { mesh: r.mesh, color: '#3a3f46', wireframe: true, onTop: true }]);
       });
       ctx.bar.append(
         slider('Niveau de réduction', 0, SIMPLIFY_MAX_PASSES, 1, 0, (v) => { set(ctx, 'level', v); run(); }),
@@ -602,8 +609,9 @@ export const MODES: Record<string, ModeSpec> = {
       run(0); // shows the triangles from the start
     },
     async apply(ctx) {
-      const r = st<{ mesh: MeshData; faceColors?: Uint32Array } | null>(ctx, 'result', null) ?? simplifyPasses(ctx.world[0], st(ctx, 'level', 0), ctx.selection[0].faceColors);
-      ctx.app.replaceObjects(ctx.selection, [[r.mesh]], { faceColors: [[r.faceColors]] });
+      const rs = st<{ mesh: MeshData; faceColors?: Uint32Array }[] | null>(ctx, 'result', null)
+        ?? ctx.selection.map((o) => { const r = simplifyPasses(o.mesh, st(ctx, 'level', 0), o.faceColors); return { mesh: worldMesh({ ...o, mesh: r.mesh }), faceColors: r.faceColors }; });
+      ctx.app.replaceObjects(ctx.selection, rs.map((r) => [r.mesh]), { faceColors: rs.map((r) => [r.faceColors]) });
       return true;
     },
   },
@@ -755,10 +763,11 @@ export const MODES: Record<string, ModeSpec> = {
       set(ctx, 'edges', false);
       const run = previewer(ctx, async () => {
         const edges = st(ctx, 'edges', false);
-        // Passes of HC smoothing, or of Loop subdivision with "Bords lisses" (×4 faces each).
-        const m = smoothTool(ctx.world[0], smoothPasses(ctx, edges), edges);
-        set(ctx, 'result', m);
-        return [{ mesh: m, color: ctx.selection[0].color }];
+        // Passes of HC smoothing, or of Loop subdivision with "Bords lisses" (×4 faces each), on
+        // every selected object, as 3D Builder.
+        const ms = ctx.world.map((w) => smoothTool(w, smoothPasses(ctx, edges), edges));
+        set(ctx, 'result', ms);
+        return ms.map((m, i) => ({ mesh: m, color: ctx.selection[i].color }));
       });
       ctx.bar.append(
         slider('Définir le niveau de lissage', 0, 6, 1, 3, // 3D Builder: SmoothRange 0–6, 3 by default
@@ -770,8 +779,8 @@ export const MODES: Record<string, ModeSpec> = {
     },
     async apply(ctx) {
       const edges = st(ctx, 'edges', false);
-      const m = st<MeshData | null>(ctx, 'result', null) ?? smoothTool(ctx.world[0], smoothPasses(ctx, edges), edges);
-      ctx.app.replaceObjects(ctx.selection, [[m]]);
+      const ms = st<MeshData[] | null>(ctx, 'result', null) ?? ctx.world.map((w) => smoothTool(w, smoothPasses(ctx, edges), edges));
+      ctx.app.replaceObjects(ctx.selection, ms.map((m) => [m]));
       return true;
     },
   },
@@ -872,10 +881,11 @@ export const MODES: Record<string, ModeSpec> = {
       set(ctx, 't', hollowThickness);
       const val = h('span', {}, `${hollowThickness.toFixed(1)} mm`);
       const run = previewer(ctx, async () => {
-        const m = await csg.hollow(ctx.world[0], st(ctx, 't', 1));
-        set(ctx, 'result', m);
+        // Every selected object is hollowed, as 3D Builder.
+        const ms = await Promise.all(ctx.world.map((w) => csg.hollow(w, st(ctx, 't', 1))));
+        set(ctx, 'result', ms);
         // 3D Builder shows the hollowed object translucent blue, the cavity visible inside.
-        return [{ mesh: m, color: '#6fa8f0', opacity: 0.5 }];
+        return ms.map((m) => ({ mesh: m, color: '#6fa8f0', opacity: 0.5 }));
       });
       ctx.bar.append(
         slider('Épaisseur minimale de mur', 0.1, 10, 0.1, hollowThickness, (v) => { hollowThickness = v; set(ctx, 't', v); set(ctx, 'result', null); val.textContent = `${v.toFixed(1)} mm`; }, () => run(0)),
@@ -884,8 +894,8 @@ export const MODES: Record<string, ModeSpec> = {
       run(0);
     },
     async apply(ctx) {
-      const m = st<MeshData | null>(ctx, 'result', null) ?? (await csg.hollow(ctx.world[0], st(ctx, 't', 1)));
-      ctx.app.replaceObjects(ctx.selection, [[m]]);
+      const ms = st<MeshData[] | null>(ctx, 'result', null) ?? (await Promise.all(ctx.world.map((w) => csg.hollow(w, st(ctx, 't', 1)))));
+      ctx.app.replaceObjects(ctx.selection, ms.map((m) => [m]));
       return true;
     },
   },
@@ -1414,7 +1424,8 @@ export const MODES: Record<string, ModeSpec> = {
     build(ctx) {
       const doc = ctx.app.doc;
       doc.checkpoint();
-      const target = ctx.selection[0];
+      // As 3D Builder, every selected object can be painted: the one clicked becomes the target.
+      let target = ctx.selection[0];
       const span = Math.max(...bounds(ctx.world[0]).max.map((v, k) => v - bounds(ctx.world[0]).min[k]));
       const s = {
         tex: proceduralTexture('checker') as TexturePixels,
@@ -1486,8 +1497,15 @@ export const MODES: Record<string, ModeSpec> = {
           } else ctx.app.toast('Cette face n’a pas de texture.', 'warn');
           return;
         }
-        if (s.mode === 'sticker') { if (id === target.id) placeSticker(face, point); return; }
-        if (id !== target.id) return;
+        const hit = ctx.selection.find((o) => o.id === id);
+        if (!hit) return;
+        if (hit.id !== target.id) {
+          // The sticker placed on the previous object stays; a new one starts on this object.
+          if (placed) setPlaced(false);
+          target = hit;
+          base = doc.get(hit.id)!.texture;
+        }
+        if (s.mode === 'sticker') { placeSticker(face, point); return; }
         doc.checkpoint(); // one step per stroke
         const o = current();
         const w = worldMesh(o);
