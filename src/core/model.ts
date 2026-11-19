@@ -1,7 +1,7 @@
 // Scene document: objects, selection, undo history. Geometry is immutable: every edit creates
 // a new MeshData, so history snapshots can share meshes.
 import { Euler, Matrix4, Quaternion, Vector3 } from 'three';
-import { type MeshData, bounds, centered, transformed } from './mesh-data';
+import { type Bounds, type MeshData, bounds, centered, transformed } from './mesh-data';
 import { analyze, type MeshReport } from '../repair/analyze';
 import type { ObjectTexture } from './texture-data';
 
@@ -44,6 +44,9 @@ interface Snapshot {
   objects: SceneObject[];
   selection: number[];
 }
+
+/** Memory the undo history may keep alive on its own (geometry no longer in the scene). */
+const HISTORY_BYTES = 500 * 1024 * 1024;
 
 export const PALETTE = ['#3cb55a', '#3c8fd6', '#e0863a', '#c94f4f', '#8a5cc7', '#d4b43a', '#4fb8b0', '#9aa3ad'];
 
@@ -91,8 +94,37 @@ export class SceneDocument {
   checkpoint(): void {
     this.undoStack.push(this.snapshot());
     if (this.undoStack.length > 100) this.undoStack.shift();
+    this.trimHistory();
     this.redoStack = [];
     this.dirty = true;
+  }
+
+  /**
+   * Besides the step limit, the oldest undo steps go when the geometry that only the history keeps
+   * alive (meshes, paint, textures no longer in the scene) passes HISTORY_BYTES.
+   */
+  private trimHistory(): void {
+    const live = new Set<object>();
+    for (const o of this.objects) { live.add(o.mesh); if (o.faceColors) live.add(o.faceColors); if (o.texture) live.add(o.texture); }
+    const seen = new Set<object>();
+    let total = 0;
+    const count = (ref: object | undefined, bytes: number) => {
+      if (!ref || live.has(ref) || seen.has(ref)) return;
+      seen.add(ref);
+      total += bytes;
+    };
+    for (let i = this.undoStack.length - 1; i >= 0; i--) {
+      for (const o of this.undoStack[i].objects) {
+        count(o.mesh, o.mesh.positions.byteLength + o.mesh.indices.byteLength);
+        count(o.faceColors, o.faceColors?.byteLength ?? 0);
+        count(o.texture, o.texture ? o.texture.face.byteLength + o.texture.uv.byteLength : 0);
+      }
+      // The newest step always stays, whatever its size.
+      if (total > HISTORY_BYTES && i < this.undoStack.length - 1) {
+        this.undoStack.splice(0, i + 1);
+        return;
+      }
+    }
   }
 
   get canUndo() { return this.undoStack.length > 0; }
@@ -212,6 +244,13 @@ export class SceneDocument {
     return obj;
   }
 
+  /** Puts back an object exactly as it was (local mesh and transform), e.g. from a recovery copy. */
+  addObject(init: Omit<SceneObject, 'id' | 'report'>): SceneObject {
+    const obj: SceneObject = { ...init, id: this.nextId++, report: analyze(init.mesh) };
+    this.objects.push(obj);
+    return obj;
+  }
+
   remove(ids: Iterable<number>): void {
     const drop = new Set(ids);
     this.objects = this.objects.filter((o) => !drop.has(o.id));
@@ -267,8 +306,75 @@ export function worldMesh(o: SceneObject): MeshData {
   return transformed(o.mesh, objectMatrix(o).elements);
 }
 
-export function worldBounds(objs: SceneObject[]) {
-  const all = objs.map((o) => bounds(worldMesh(o)));
+type Placement = Pick<SceneObject, 'mesh' | 'position' | 'rotation' | 'scale'>;
+
+const localBoxes = new WeakMap<MeshData, Bounds>();
+
+/** Box of a mesh in its own frame, cached per mesh (meshes are immutable). */
+export function localBounds(m: MeshData): Bounds {
+  let b = localBoxes.get(m);
+  if (!b) { b = bounds(m); localBoxes.set(m, b); }
+  return b;
+}
+
+/**
+ * Exact box of the vertices turned and scaled (without the move), cached per mesh for its last
+ * rotation and scale: a move only shifts it, so drags do not walk the vertices again.
+ */
+const turnedBoxes = new WeakMap<MeshData, { key: string; b: Bounds }>();
+function turnedBounds(o: Placement): Bounds {
+  const key = `${o.rotation.join()}|${o.scale.join()}`;
+  const hit = turnedBoxes.get(o.mesh);
+  if (hit && hit.key === key) return hit.b;
+  const e = objectMatrix({ position: [0, 0, 0], rotation: o.rotation, scale: o.scale }).elements;
+  const p = o.mesh.positions;
+  let x0 = Infinity, y0 = Infinity, z0 = Infinity, x1 = -Infinity, y1 = -Infinity, z1 = -Infinity;
+  for (let i = 0; i < p.length; i += 3) {
+    const x = p[i], y = p[i + 1], z = p[i + 2];
+    const wx = e[0] * x + e[4] * y + e[8] * z, wy = e[1] * x + e[5] * y + e[9] * z, wz = e[2] * x + e[6] * y + e[10] * z;
+    if (wx < x0) x0 = wx;
+    if (wx > x1) x1 = wx;
+    if (wy < y0) y0 = wy;
+    if (wy > y1) y1 = wy;
+    if (wz < z0) z0 = wz;
+    if (wz > z1) z1 = wz;
+  }
+  const b: Bounds = { min: [x0, y0, z0], max: [x1, y1, z1] };
+  turnedBoxes.set(o.mesh, { key, b });
+  return b;
+}
+
+/** Exact world box of an object (its transformed vertices), cached. */
+export function objectBounds(o: Placement): { min: Vec3; max: Vec3 } {
+  const b = turnedBounds(o), p = o.position;
+  return {
+    min: [b.min[0] + p[0], b.min[1] + p[1], b.min[2] + p[2]],
+    max: [b.max[0] + p[0], b.max[1] + p[1], b.max[2] + p[2]],
+  };
+}
+
+/**
+ * Approximate world box: the 8 corners of the local box transformed. The exact box without
+ * rotation, larger with one; only for enable states and helpers, never for placement.
+ */
+export function approxBounds(o: Placement): { min: Vec3; max: Vec3 } {
+  const l = localBounds(o.mesh);
+  const e = objectMatrix(o).elements;
+  const min: Vec3 = [Infinity, Infinity, Infinity], max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (let c = 0; c < 8; c++) {
+    const x = c & 1 ? l.max[0] : l.min[0], y = c & 2 ? l.max[1] : l.min[1], z = c & 4 ? l.max[2] : l.min[2];
+    const w = [e[0] * x + e[4] * y + e[8] * z + e[12], e[1] * x + e[5] * y + e[9] * z + e[13], e[2] * x + e[6] * y + e[10] * z + e[14]];
+    for (let k = 0; k < 3; k++) {
+      if (w[k] < min[k]) min[k] = w[k];
+      if (w[k] > max[k]) max[k] = w[k];
+    }
+  }
+  return { min, max };
+}
+
+/** Exact world box of several objects (cached per object, see objectBounds). */
+export function worldBounds(objs: Placement[]) {
+  const all = objs.map(objectBounds);
   return {
     min: [0, 1, 2].map((k) => Math.min(...all.map((b) => b.min[k]))) as Vec3,
     max: [0, 1, 2].map((k) => Math.max(...all.map((b) => b.max[k]))) as Vec3,

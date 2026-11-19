@@ -4,6 +4,7 @@ const { app, BrowserWindow, Menu, dialog, net, protocol, session, shell } = requ
 const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
+const { registerUpdate } = require('./update.cjs');
 
 const DIST = path.join(__dirname, '..', 'dist');
 const HOST = 'app://assembler';
@@ -82,12 +83,19 @@ if (!app.requestSingleInstanceLock()) {
       if (!file.startsWith(DIST + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
       return net.fetch(pathToFileURL(file).toString());
     });
-    // Installed fonts for the Relief, camera for Add > Camera, clipboard; nothing else.
-    const allowed = new Set(['local-fonts', 'media', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen']);
-    session.defaultSession.setPermissionRequestHandler((_wc, perm, cb) => cb(allowed.has(perm)));
-    session.defaultSession.setPermissionCheckHandler((_wc, perm) => allowed.has(perm));
+    // Installed fonts for the Relief, the camera (video only) for Add > Camera, writing to the
+    // clipboard; only for the app's own page, nothing else.
+    const allowed = new Set(['local-fonts', 'media', 'clipboard-sanitized-write', 'fullscreen']);
+    const own = (url) => typeof url === 'string' && url.startsWith(HOST + '/');
+    session.defaultSession.setPermissionRequestHandler((wc, perm, cb, details) => {
+      if (!allowed.has(perm) || !own(details.requestingUrl ?? wc.getURL())) return cb(false);
+      if (perm === 'media' && (details.mediaTypes ?? []).some((t) => t !== 'video')) return cb(false);
+      cb(true);
+    });
+    session.defaultSession.setPermissionCheckHandler((wc, perm, origin) => allowed.has(perm) && own(origin ? origin + '/' : wc?.getURL()));
     // macOS keeps an application menu (copy / paste shortcuts); elsewhere the app has its own.
     Menu.setApplicationMenu(process.platform === 'darwin' ? Menu.buildFromTemplate([{ role: 'appMenu' }, { role: 'editMenu' }, { role: 'windowMenu' }]) : null);
+    registerUpdate((sender) => !!win && sender === win.webContents && sender.getURL().startsWith(HOST + '/'));
     createWindow();
     app.on('activate', () => { if (!BrowserWindow.getAllWindows().length) createWindow(); });
   });

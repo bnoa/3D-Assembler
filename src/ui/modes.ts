@@ -983,7 +983,8 @@ export const MODES: Record<string, ModeSpec> = {
       // Police: the installed fonts as in 3D Builder. « Fichier de police… » (not in 3D Builder) only
       // shows when the browser cannot read the installed fonts.
       const fileOption = () => (canReadSystemFonts() ? [] : [h('option', { value: ':file' }, 'Fichier de police…')]);
-      const fontOption = (f: string) => h('option', { value: f, style: `font-family:"${f}"` }, f);
+      // The name only through the style property (a file name cannot add other CSS rules).
+      const fontOption = (f: string) => { const o = h('option', { value: f }, f); o.style.fontFamily = JSON.stringify(f); return o; };
       const fontSel = h('select', { 'aria-label': 'Police', style: 'width:140px' },
         ...['Segoe UI', 'Calibri', 'Arial', 'Verdana', 'Georgia', 'Times New Roman', 'Courier New', 'Impact', 'Comic Sans MS', 'Trebuchet MS'].map(fontOption),
         ...fileOption()) as HTMLSelectElement;

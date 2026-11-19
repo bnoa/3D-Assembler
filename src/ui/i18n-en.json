@@ -289,5 +289,14 @@
   "Télécharger": "Download",
   "Recharger": "Reload",
   "3D Assembler {0}": "3D Assembler {0}",
-  "Logiciel libre (MIT)": "Free software (MIT)"
+  "Logiciel libre (MIT)": "Free software (MIT)",
+  "Téléchargement de la mise à jour…": "Downloading the update…",
+  "Glissez 3D Assembler dans le dossier Applications pour remplacer l’ancienne version, puis rouvrez-le.": "Drag 3D Assembler into the Applications folder to replace the old version, then open it again.",
+  "Installation… 3D Assembler va redémarrer.": "Installing… 3D Assembler will restart.",
+  "La mise à jour n’a pas pu être installée. Téléchargez-la depuis la page des versions.": "The update could not be installed. Download it from the releases page.",
+  "Ouvrir la page": "Open the page",
+  "Vous n’avez pas la dernière version de 3D Assembler ({0} est disponible).": "You don’t have the latest version of 3D Assembler ({0} is available).",
+  "En savoir plus": "Learn more",
+  "Ce fichier glTF dépend d’autres fichiers, qui ne sont pas lus. Ouvrez plutôt la version .glb (tout en un seul fichier).": "This glTF file depends on other files, which are not read. Open the .glb version instead (everything in one file).",
+  "Fichier 3MF trop volumineux ou endommagé.": "The 3MF file is too large or damaged."
 }

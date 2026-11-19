@@ -1,7 +1,7 @@
 // three.js view of the scene document. Z is up, units are millimetres.
 import {
   ACESFilmicToneMapping, AmbientLight, Box3, BufferAttribute, BufferGeometry, CanvasTexture, Color, DirectionalLight,
-  DoubleSide, EdgesGeometry, Fog, Group, HemisphereLight, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial,
+  DoubleSide, Fog, Group, HemisphereLight, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial,
   MeshStandardMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Plane, PlaneGeometry, Raycaster,
   RepeatWrapping, ClampToEdgeWrapping, DataTexture, LinearFilter, LinearMipmapLinearFilter, Scene, ShadowMaterial, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
   GridHelper, Quaternion,
@@ -10,7 +10,7 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CameraControls, MAX_FOV, VIEW_PLATE, defaultPose, frameBox } from './camera-controls';
 import type { MeshData } from '../core/mesh-data';
-import { type SceneDocument, type SceneObject, type Vec3, isValid, objectMatrix } from '../core/model';
+import { type SceneDocument, type SceneObject, type Vec3, isValid, objectBounds, objectMatrix } from '../core/model';
 import { detentAngle, snapAxis, snapCandidates } from '../geometry/align-snap';
 import { type ObjectTexture, type TextureImage, hasTexture } from '../core/texture-data';
 
@@ -33,7 +33,8 @@ interface Entry {
   obj: SceneObject;
   group: Group;
   mesh: Mesh<BufferGeometry, MeshStandardMaterial>;
-  outline: LineSegments;
+  /** Selection outline, built on first selection (most objects are never selected). */
+  outline: LineSegments<BufferGeometry, LineBasicMaterial> | null;
   /** Textured faces, one mesh per image, drawn over the object. */
   overlays: Mesh<BufferGeometry, MeshStandardMaterial>[];
 }
@@ -80,6 +81,8 @@ export class Viewport {
   private needsRender = true;
 
   constructor(private host: HTMLElement, private doc: SceneDocument) {
+    // preserveDrawingBuffer stays: the view is drawn only when something changes, and without it
+    // Chromium can show (and capture) an empty canvas when it composites the page again later.
     this.renderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.outputColorSpace = SRGBColorSpace;
@@ -87,13 +90,17 @@ export class Viewport {
     this.renderer.toneMappingExposure = 1.05;
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = PCFSoftShadowMap;
+    // The sun is fixed in the world: the shadow map only changes with the scene, not the camera
+    // (invalidate() asks for it, invalidateView() does not).
+    this.renderer.shadowMap.autoUpdate = false;
+    this.renderer.shadowMap.needsUpdate = true;
     host.appendChild(this.renderer.domElement);
 
     this.scene.background = new Color('#4a4d52');
     this.scene.fog = new Fog('#4a4d52', 500, 1400);
     this.camera = new PerspectiveCamera((MAX_FOV * 180) / Math.PI, 1, 1, 5000);
     this.orbit = new CameraControls(this.camera, this.renderer.domElement, () => this.fullView());
-    this.orbit.addEventListener('change', () => this.invalidate());
+    this.orbit.addEventListener('change', () => this.invalidateView());
     this.resetCamera();
 
     this.gizmo = new TransformControls(this.camera, this.renderer.domElement);
@@ -139,7 +146,14 @@ export class Viewport {
     loop();
   }
 
+  /** Something in the scene changed: draw again, shadows included. */
   invalidate(): void {
+    this.needsRender = true;
+    this.renderer.shadowMap.needsUpdate = true;
+  }
+
+  /** Only the camera or the canvas size changed: draw again with the same shadow map. */
+  invalidateView(): void {
     this.needsRender = true;
   }
 
@@ -160,7 +174,7 @@ export class Viewport {
     this.camera.aspect = full.w / full.h;
     this.camera.setViewOffset(full.w, full.h, full.x, full.y, w, h);
     this.camera.updateProjectionMatrix();
-    this.invalidate();
+    this.invalidateView();
   }
 
   // --- scene construction --------------------------------------------------------------------
@@ -273,22 +287,20 @@ export class Viewport {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.userData.objectId = obj.id;
-    const outline = new LineSegments(new EdgesGeometry(geo, 30), new LineBasicMaterial({ color: SELECT_COLOR }));
-    outline.visible = false;
     const group = new Group();
     group.matrixAutoUpdate = false;
-    group.add(mesh, outline);
+    group.add(mesh);
     const overlays = textureOverlays(obj.mesh, obj.texture);
     for (const o of overlays) { o.userData.objectId = obj.id; group.add(o); }
     this.scene.add(group);
-    return { obj, group, mesh, outline, overlays };
+    return { obj, group, mesh, outline: null, overlays };
   }
 
   private disposeEntry(e: Entry): void {
     this.scene.remove(e.group);
     e.mesh.geometry.dispose();
     e.mesh.material.dispose();
-    e.outline.geometry.dispose();
+    if (e.outline) { e.outline.geometry.dispose(); e.outline.material.dispose(); }
     for (const o of e.overlays) { o.geometry.dispose(); o.material.map?.dispose(); o.material.dispose(); }
   }
 
@@ -337,7 +349,11 @@ export class Viewport {
       e.mesh.castShadow = false;
       for (const o of e.overlays) o.visible = false;
     }
-    e.outline.visible = selected;
+    if (selected && !e.outline) {
+      e.outline = new LineSegments(outlineGeometry(e.obj.mesh), new LineBasicMaterial({ color: SELECT_COLOR }));
+      e.group.add(e.outline);
+    }
+    if (e.outline) e.outline.visible = selected;
     e.group.visible = !this.hidden.has(e.obj.id);
   }
 
@@ -391,7 +407,7 @@ export class Viewport {
       const mesh = new Mesh(geo, mat);
       mesh.castShadow = (p.opacity ?? 1) >= 1;
       this.overlay.add(mesh);
-      if (p.edges) this.overlay.add(new LineSegments(new EdgesGeometry(geo, 30), new LineBasicMaterial({ color: 0x1b1d20 })));
+      if (p.edges) this.overlay.add(new LineSegments(outlineGeometry(p.mesh), new LineBasicMaterial({ color: 0x1b1d20 })));
       for (const t of textureOverlays(p.mesh, p.texture)) this.overlay.add(t);
     }
     this.invalidate();
@@ -451,8 +467,10 @@ export class Viewport {
       if (g.mode === 'translate' && g.axis) {
         // Move arrows: the box snaps along the dragged axes only.
         if (!this.gizmoSnap) this.gizmoSnap = this.snapContext([sel.id]);
-        this.gizmoProxy.updateMatrix();
-        const box = new Box3().setFromBufferAttribute(e.mesh.geometry.getAttribute('position') as BufferAttribute).applyMatrix4(this.gizmoProxy.matrix);
+        // Arrows only move: the object's exact box (cached for its rotation and scale) at the proxy.
+        const pp = this.gizmoProxy.position;
+        const wb = objectBounds({ ...sel, position: [pp.x, pp.y, pp.z] });
+        const box = new Box3(new Vector3(...wb.min), new Vector3(...wb.max));
         ['X', 'Y', 'Z'].forEach((name, k) => {
           if (!g.axis!.includes(name)) return;
           const fix = snapAxis(box.min.getComponent(k), box.max.getComponent(k), this.gizmoSnap!.cands[k], this.gizmoSnap!.threshold);
@@ -703,8 +721,8 @@ export class Viewport {
   }
 
   private boxOf(obj: SceneObject, position: Vec3): Box3 {
-    const b = new Box3().setFromBufferAttribute(this.entries.get(obj.id)!.mesh.geometry.getAttribute('position') as BufferAttribute);
-    return b.applyMatrix4(objectMatrix({ ...obj, position }));
+    const b = objectBounds({ ...obj, position });
+    return new Box3(new Vector3(...b.min), new Vector3(...b.max));
   }
 
   private wouldCollide(d: NonNullable<Viewport['drag']>, delta: Vector3): boolean {
@@ -771,13 +789,55 @@ export class Viewport {
   }
 
   private thumbRenderer: WebGLRenderer | null = null;
-  private thumbCache = new WeakMap<MeshData, { key: string; colors?: Uint32Array; texture?: ObjectTexture; url: string }>();
+  /** Last pictures per mesh, newest first (a few, for objects sharing a mesh). */
+  private thumbCache = new WeakMap<MeshData, { key: string; colors?: Uint32Array; texture?: ObjectTexture; url: string }[]>();
 
-  /** Small rendered picture of an object for the side panel (cached per mesh and colours). */
+  /** Called when pictures asked with thumbnail() are ready (the side panel shows them). */
+  onThumbnails: () => void = () => {};
+  private thumbQueue = new Map<MeshData, SceneObject>();
+  private thumbTimer = 0;
+
+  private static thumbKey(obj: SceneObject): string {
+    // The picture shows the object turned and scaled (framed on its scaled bounding sphere).
+    return `${obj.color}|${obj.material ?? ''}|${isValid(obj)}|${obj.scale.join()}|${obj.rotation.join()}`;
+  }
+
+  private thumbHit(obj: SceneObject): string | null {
+    const key = Viewport.thumbKey(obj);
+    return this.thumbCache.get(obj.mesh)?.find((t) => t.key === key && t.colors === obj.faceColors && t.texture === obj.texture)?.url ?? null;
+  }
+
+  /**
+   * Small rendered picture of an object for the side panel (cached per mesh and colours). A
+   * picture not ready yet is rendered when the page is idle (a big mesh takes a while, and the panel
+   * is drawn again after every change): meanwhile the previous picture of the mesh, if any, is
+   * returned, else an empty image, and onThumbnails is called once it is there.
+   */
   thumbnail(obj: SceneObject): string {
-    const key = `${obj.color}|${obj.material ?? ''}|${isValid(obj)}|${obj.scale.join()}|${obj.rotation.join()}`;
-    const hit = this.thumbCache.get(obj.mesh);
-    if (hit && hit.key === key && hit.colors === obj.faceColors && hit.texture === obj.texture) return hit.url;
+    const url = this.thumbHit(obj);
+    if (url) return url;
+    this.thumbQueue.set(obj.mesh, obj);
+    if (!this.thumbTimer) {
+      const run = () => {
+        this.thumbTimer = 0;
+        const jobs = [...this.thumbQueue.values()];
+        this.thumbQueue.clear();
+        let done = false;
+        // Only objects still in the scene as they were asked.
+        for (const o of jobs) if (this.doc.get(o.id) === o && !this.thumbHit(o)) { this.thumbnailNow(o); done = true; }
+        if (done) this.onThumbnails();
+      };
+      const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o: { timeout: number }) => number }).requestIdleCallback;
+      this.thumbTimer = idle ? idle(run, { timeout: 500 }) : window.setTimeout(run, 50);
+    }
+    return this.thumbCache.get(obj.mesh)?.[0]?.url ?? EMPTY_IMAGE;
+  }
+
+  /** The picture at once (e.g. for the recent files list). */
+  thumbnailNow(obj: SceneObject): string {
+    const cached = this.thumbHit(obj);
+    if (cached) return cached;
+    const key = Viewport.thumbKey(obj);
     if (!this.thumbRenderer) {
       this.thumbRenderer = new WebGLRenderer({ antialias: true, preserveDrawingBuffer: true, alpha: true });
       this.thumbRenderer.setSize(96, 96);
@@ -788,8 +848,9 @@ export class Viewport {
     const sun = new DirectionalLight('#ffffff', 2);
     sun.position.set(1, -2, 3);
     scene.add(sun);
+    // On the mesh's own arrays (no copy) unless painted.
     const geo = toGeometry(obj.mesh, false, obj.faceColors, obj.color);
-    const mat = new MeshStandardMaterial({ color: obj.faceColors ? '#ffffff' : isValid(obj) ? obj.color : INVALID_COLOR, vertexColors: !!obj.faceColors, roughness: 0.6, side: DoubleSide });
+    const mat = new MeshStandardMaterial({ color: obj.faceColors ? '#ffffff' : isValid(obj) ? obj.color : INVALID_COLOR, vertexColors: !!obj.faceColors, roughness: 0.6, side: DoubleSide, flatShading: true });
     const mesh = new Mesh(geo, mat);
     // Textures too, as in the 3D view (only on a valid object, like the colours).
     const overlays = isValid(obj) ? textureOverlays(obj.mesh, obj.texture) : [];
@@ -807,7 +868,7 @@ export class Viewport {
     geo.dispose();
     mat.dispose();
     for (const o of overlays) { o.geometry.dispose(); o.material.dispose(); } // images stay cached
-    this.thumbCache.set(obj.mesh, { key, colors: obj.faceColors, texture: obj.texture, url });
+    this.thumbCache.set(obj.mesh, [{ key, colors: obj.faceColors, texture: obj.texture, url }, ...(this.thumbCache.get(obj.mesh) ?? [])].slice(0, 4));
     return url;
   }
 
@@ -818,6 +879,9 @@ export class Viewport {
 }
 
 // --- helpers ---------------------------------------------------------------------------------------
+
+/** Transparent 1 × 1 GIF, while a thumbnail is not rendered yet. */
+const EMPTY_IMAGE = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 const imageTextures = new WeakMap<TextureImage, DataTexture>();
 
@@ -879,6 +943,102 @@ export function textureOverlays(m: MeshData, t?: ObjectTexture): Mesh<BufferGeom
   return out;
 }
 
+const outlines = new WeakMap<MeshData, Float32Array>();
+
+/**
+ * Selection outline: the edges whose two faces meet at more than 30°, and the open edges, as
+ * three's EdgesGeometry(geometry, 30) draws them, but read from the indexed mesh with integer edge
+ * keys (EdgesGeometry hashes vertex positions as strings: seconds on a million triangles).
+ * Vertices at the same place to 1e-4 mm count as one, as EdgesGeometry merges them. Cached per mesh.
+ */
+export function outlineGeometry(m: MeshData): BufferGeometry {
+  let lines = outlines.get(m);
+  if (!lines) { lines = outlineSegments(m); outlines.set(m, lines); }
+  const g = new BufferGeometry();
+  g.setAttribute('position', new BufferAttribute(lines, 3));
+  return g;
+}
+
+/** Open-addressing table size: a power of two at least twice `n`. */
+const tableSize = (n: number) => 2 ** Math.ceil(Math.log2(Math.max(16, n * 2)));
+
+export function outlineSegments(m: MeshData, thresholdAngle = 30): Float32Array {
+  const P = m.positions, I = m.indices;
+  const nv = P.length / 3, nt = I.length / 3;
+  // 1. Same position to 4 decimals, same vertex (EdgesGeometry's precision).
+  const bits = new Float64Array(P.length);
+  for (let i = 0; i < P.length; i++) bits[i] = Math.round(P[i] * 1e4);
+  const vcap = tableSize(nv), vmask = vcap - 1;
+  const vtab = new Int32Array(vcap).fill(-1);
+  const canon = new Uint32Array(nv);
+  for (let v = 0; v < nv; v++) {
+    const x = bits[v * 3], y = bits[v * 3 + 1], z = bits[v * 3 + 2];
+    let h = (Math.imul(x | 0, 0x9e3779b1) ^ Math.imul(y | 0, 0x85ebca77) ^ Math.imul(z | 0, 0xc2b2ae3d)) >>> 0;
+    for (;;) {
+      h &= vmask;
+      const u = vtab[h];
+      if (u < 0) { vtab[h] = v; canon[v] = v; break; }
+      if (bits[u * 3] === x && bits[u * 3 + 1] === y && bits[u * 3 + 2] === z) { canon[v] = u; break; }
+      h++;
+    }
+  }
+  // 2. Unit face normals.
+  const normals = new Float32Array(nt * 3);
+  for (let f = 0; f < nt; f++) {
+    const a = I[f * 3] * 3, b = I[f * 3 + 1] * 3, c = I[f * 3 + 2] * 3;
+    const ux = P[b] - P[a], uy = P[b + 1] - P[a + 1], uz = P[b + 2] - P[a + 2];
+    const wx = P[c] - P[a], wy = P[c + 1] - P[a + 1], wz = P[c + 2] - P[a + 2];
+    const nx = uy * wz - uz * wy, ny = uz * wx - ux * wz, nz = ux * wy - uy * wx;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    normals[f * 3] = nx / l; normals[f * 3 + 1] = ny / l; normals[f * 3 + 2] = nz / l;
+  }
+  // 3. Edges keyed by their (smaller, larger) vertex. As EdgesGeometry: the first face of an edge
+  // waits for the next one going the other way; the pair draws a line when their normals differ by
+  // the threshold; an edge left without its pair (open, or wound the same way) draws a line too.
+  const thresholdDot = Math.cos((thresholdAngle * Math.PI) / 180);
+  const ecap = tableSize(nt * 1.5), emask = ecap - 1;
+  const ka = new Uint32Array(ecap), kb = new Uint32Array(ecap);
+  // Face index + 1 waiting for its pair, the direction in the sign; 0 = empty slot, PAIRED = matched.
+  const state = new Int32Array(ecap);
+  const PAIRED = 0x7fffffff;
+  const out: number[] = [];
+  const push = (u: number, v: number) => {
+    out.push(P[u * 3], P[u * 3 + 1], P[u * 3 + 2], P[v * 3], P[v * 3 + 1], P[v * 3 + 2]);
+  };
+  for (let f = 0; f < nt; f++) {
+    const c0 = canon[I[f * 3]], c1 = canon[I[f * 3 + 1]], c2 = canon[I[f * 3 + 2]];
+    if (c0 === c1 || c1 === c2 || c2 === c0) continue; // degenerate, skipped as EdgesGeometry does
+    for (let k = 0; k < 3; k++) {
+      const a = k === 0 ? c0 : k === 1 ? c1 : c2, b = k === 0 ? c1 : k === 1 ? c2 : c0;
+      const lo = a < b ? a : b, hi = a < b ? b : a, forward = a < b;
+      let h = (Math.imul(lo, 0x9e3779b1) ^ Math.imul(hi, 0x85ebca77)) >>> 0;
+      for (;;) {
+        h &= emask;
+        const st = state[h];
+        if (st === 0) { ka[h] = lo; kb[h] = hi; state[h] = forward ? f + 1 : -(f + 1); break; }
+        if (ka[h] === lo && kb[h] === hi) {
+          if (st === PAIRED) {
+            // A third face on the edge starts a new wait, as EdgesGeometry does after a pair.
+            state[h] = forward ? f + 1 : -(f + 1);
+          } else if ((st > 0) !== forward) {
+            const g = (st > 0 ? st : -st) - 1;
+            const dot = normals[f * 3] * normals[g * 3] + normals[f * 3 + 1] * normals[g * 3 + 1] + normals[f * 3 + 2] * normals[g * 3 + 2];
+            if (dot <= thresholdDot) push(lo, hi);
+            state[h] = PAIRED;
+          }
+          break;
+        }
+        h++;
+      }
+    }
+  }
+  for (let h = 0; h < ecap; h++) {
+    const st = state[h];
+    if (st !== 0 && st !== PAIRED) push(ka[h], kb[h]);
+  }
+  return new Float32Array(out);
+}
+
 export function toGeometry(m: MeshData, smooth: boolean, faceColors?: Uint32Array, baseColor?: string): BufferGeometry {
   const g = new BufferGeometry();
   if (faceColors) {
@@ -903,20 +1063,12 @@ export function toGeometry(m: MeshData, smooth: boolean, faceColors?: Uint32Arra
     g.computeBoundingSphere();
     return g;
   }
-  if (smooth) {
-    g.setAttribute('position', new BufferAttribute(m.positions, 3));
-    g.setIndex(new BufferAttribute(m.indices, 1));
-  } else {
-    const soup = new Float32Array(m.indices.length * 3);
-    for (let i = 0; i < m.indices.length; i++) {
-      const v = m.indices[i] * 3;
-      soup[i * 3] = m.positions[v];
-      soup[i * 3 + 1] = m.positions[v + 1];
-      soup[i * 3 + 2] = m.positions[v + 2];
-    }
-    g.setAttribute('position', new BufferAttribute(soup, 3));
-  }
-  g.computeVertexNormals();
+  // Indexed on the mesh's own arrays, faces in the mesh's order (picking's faceIndex is the mesh
+  // face). Without smoothing the materials use flatShading (normals from the screen derivatives),
+  // so the vertices need not be split per face nor carry normals.
+  g.setAttribute('position', new BufferAttribute(m.positions, 3));
+  g.setIndex(new BufferAttribute(m.indices, 1));
+  if (smooth) g.computeVertexNormals();
   g.computeBoundingSphere();
   return g;
 }

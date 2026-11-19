@@ -1,6 +1,6 @@
 // Application shell: ribbon, side panel, transform bar, menu, notifications and commands.
 import { Matrix4, Vector3 } from 'three';
-import { NO_PAINT, SceneDocument, type SceneObject, type Vec3, isValid, movedTransform, objectMatrix, worldBounds, worldMesh } from '../core/model';
+import { NO_PAINT, SceneDocument, type SceneObject, type Vec3, isValid, approxBounds, movedTransform, objectBounds, objectMatrix, worldBounds, worldMesh } from '../core/model';
 import { type MeshData, bounds, merged, size, surfaceArea, transformed } from '../core/mesh-data';
 import { Viewport, type GizmoMode, type ViewSettings } from '../render/viewport';
 import { PRIMITIVES, PRIMITIVE_COLORS, makePrimitive, type PrimitiveKind } from '../geometry/primitives';
@@ -16,12 +16,12 @@ import { read3MFInfo } from '../io/threemf';
 import { icon } from './icons';
 import { download, h, pickFiles } from './dom';
 import { addRecent, listRecent, recentFile } from '../io/recent';
-import { clearRecovery, orphanRecoveries, recoverySession, saveRecovery } from '../io/recovery';
+import { type RecoveryEntry, type RecoveryScene, clearRecovery, orphanRecoveries, recoverySession, saveRecovery } from '../io/recovery';
 import { type Lang, currentLang, setLang, systemLang, toEnglish } from './i18n';
 import { type ModeContext, type ModeSpec, MODES, imageInsertMode } from './modes';
 import { type Bed, DEFAULT_BED } from '../analysis/printability';
 import { imageData } from '../geometry/image-insert';
-import { APP_VERSION, type UpdateInfo, checkForUpdate } from '../io/update';
+import { APP_VERSION, RELEASES_PAGE, type UpdateInfo, checkForUpdate } from '../io/update';
 import { settleRotation } from '../geometry/settle';
 
 type Tab = 'insert' | 'object' | 'edit' | 'paint' | 'view' | 'help';
@@ -55,15 +55,17 @@ interface Prefs {
   collision: boolean;
   /** Interface language: the system's (French for a French system, English otherwise) or a choice. */
   lang: 'auto' | Lang;
-  /** Look for a new version at startup (off by default: nothing is sent unless the user asks). */
-  checkUpdates: boolean;
+  /** Look for a new version at startup (the request only asks GitHub for the latest version). */
+  updateCheck: boolean;
+  /** Version whose update banner was closed: not shown again for it. */
+  skippedVersion?: string;
 }
 
 function loadPrefs(): Prefs {
   try {
-    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', checkUpdates: false, ...JSON.parse(localStorage.getItem('3dbr.prefs') ?? '{}') };
+    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', updateCheck: true, ...JSON.parse(localStorage.getItem('3dbr.prefs') ?? '{}') };
   } catch {
-    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', checkUpdates: false };
+    return { unit: 'mm', theme: 'system', bed: { ...DEFAULT_BED }, align: true, collision: false, lang: 'auto', updateCheck: true };
   }
 }
 
@@ -139,6 +141,8 @@ export class App {
   private installPrompt: (Event & { prompt(): Promise<void> }) | null = null;
   private backupTimer = 0;
   private backupLast = 0;
+  /** What the last recovery copy holds (objects are replaced on every change, never edited). */
+  private backupState: { objects: SceneObject[]; name: string; info: string } | null = null;
 
   constructor(root: HTMLElement) {
     this.applyTheme();
@@ -153,6 +157,7 @@ export class App {
       this.doc.emit();
     };
     this.view.onTransformLive = () => this.renderTbarValues();
+    this.view.onThumbnails = () => this.renderSide();
     this.view.setGizmo(null);
     this.applyPrefs();
     this.doc.on(() => this.refresh());
@@ -207,15 +212,33 @@ export class App {
   private dropBackup(): void {
     clearTimeout(this.backupTimer);
     this.backupTimer = 0;
+    this.backupState = null;
     if (this.backupReady) void clearRecovery();
   }
 
+  /**
+   * Writes the recovery copy: the scene's own arrays (shared, not copied; IndexedDB clones them),
+   * skipped when no object, name or metadata changed since the last copy.
+   */
   private async writeBackup(): Promise<void> {
     this.backupLast = Date.now();
-    if (!this.doc.dirty || !this.doc.objects.length) return clearRecovery();
-    try {
-      await saveRecovery(this.doc.name, await exportScene(this.sceneItems(this.doc.objects), '3mf', this.doc.name, this.doc.info));
-    } catch { /* the copy is best effort */ }
+    if (!this.doc.dirty || !this.doc.objects.length) {
+      this.backupState = null;
+      return clearRecovery();
+    }
+    const state = { objects: [...this.doc.objects], name: this.doc.name, info: JSON.stringify(this.doc.info) };
+    const last = this.backupState;
+    if (last && last.name === state.name && last.info === state.info && last.objects.length === state.objects.length
+      && last.objects.every((o, i) => o === state.objects[i])) return;
+    const scene: RecoveryScene = {
+      info: { ...this.doc.info },
+      objects: state.objects.map((o) => ({
+        name: o.name, color: o.color, positions: o.mesh.positions, indices: o.mesh.indices,
+        position: o.position, rotation: o.rotation, scale: o.scale,
+        faceColors: o.faceColors, material: o.material, texture: o.texture, selfIntersections: o.selfIntersections,
+      })),
+    };
+    if (await saveRecovery(state.name, scene)) this.backupState = state;
   }
 
   /** 3D Builder's start-up prompt when the previous session left unsaved changes. */
@@ -228,7 +251,7 @@ export class App {
     const answer = (keep: boolean) => async () => {
       el.remove();
       if (keep) {
-        await this.restoreScene(new File([r.data], `${r.name}.3mf`), r.name);
+        await this.restoreScene(r);
         if (r.session !== recoverySession()) await clearRecovery(r.session);
       } else for (const o of orphans) await clearRecovery(o.session);
       this.backupReady = true;
@@ -244,14 +267,31 @@ export class App {
   }
 
   /** Puts the recovery copy back as it was: objects where they were, scene unsaved, no recent entry. */
-  private async restoreScene(file: File, name: string): Promise<void> {
+  private async restoreScene(r: RecoveryEntry): Promise<void> {
     await this.busy(async () => {
+      const name = r.name;
       this.doc.reset(name);
-      try { Object.assign(this.doc.info, read3MFInfo(new Uint8Array(await file.arrayBuffer()))); } catch { /* no metadata */ }
-      for (const item of await importFile(file)) {
-        const opts = { name: item.name, color: item.color, faceColors: item.faceColors, texture: item.texture };
-        if (item.local) this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts);
-        else this.doc.addWorldMesh(item.mesh, opts);
+      if (r.scene) {
+        Object.assign(this.doc.info, r.scene.info);
+        for (const o of r.scene.objects) {
+          const faces = o.indices.length / 3;
+          this.doc.addObject({
+            name: o.name, color: o.color, mesh: { positions: o.positions, indices: o.indices },
+            position: o.position, rotation: o.rotation, scale: o.scale, material: o.material,
+            selfIntersections: o.selfIntersections,
+            faceColors: o.faceColors?.length === faces ? o.faceColors : undefined,
+            texture: o.texture?.face.length === faces ? o.texture : undefined,
+          });
+        }
+      } else if (r.data) {
+        // Copy written by an older version: a 3MF.
+        const file = new File([r.data], `${name}.3mf`);
+        try { Object.assign(this.doc.info, read3MFInfo(new Uint8Array(await file.arrayBuffer()))); } catch { /* no metadata */ }
+        for (const item of await importFile(file)) {
+          const opts = { name: item.name, color: item.color, faceColors: item.faceColors, texture: item.texture };
+          if (item.local) this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts);
+          else this.doc.addWorldMesh(item.mesh, opts);
+        }
       }
       this.home.classList.add('hidden');
       this.doc.dirty = true;
@@ -478,7 +518,7 @@ export class App {
     if (this.gizmo === 'rotate') return o.rotation;
     if (this.gizmo === 'scale' && this.scalePercent) return sel.length === 1 ? o.scale.map((s) => s * 100) as Vec3 : [100, 100, 100];
     if (this.gizmo === 'scale') {
-      const b = sel.length === 1 ? bounds(worldMesh(o as SceneObject)) : worldBounds(sel);
+      const b = sel.length === 1 ? objectBounds(o) : worldBounds(sel);
       return size(b).map((v) => v / k) as Vec3;
     }
     if (sel.length === 1) return o.position.map((v) => v / k) as Vec3;
@@ -689,7 +729,7 @@ export class App {
           const o = item.local ? this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts) : this.doc.addWorldMesh(item.mesh, { ...opts, dropOnPlate: true });
           if (item.local) {
             // Rest on the plate, keeping the rotation and scale read from the file.
-            const zmin = bounds(worldMesh(o)).min[2];
+            const zmin = objectBounds(o).min[2];
             this.doc.update(o.id, { position: [o.position[0], o.position[1], o.position[2] - zmin] });
           }
           const width = size(bounds(o.mesh))[0] * o.scale[0];
@@ -699,7 +739,7 @@ export class App {
           added.push(o.id);
         }
         const o = this.doc.get(added[first]);
-        void addRecent(f, o ? this.view.thumbnail(o) : undefined).then(() => this.buildHome());
+        void addRecent(f, o ? this.view.thumbnailNow(o) : undefined).then(() => this.buildHome());
       }
       this.home.classList.add('hidden');
       this.doc.select(added);
@@ -729,7 +769,7 @@ export class App {
         for (const id of ids) {
           const o = this.doc.get(id);
           if (!o) continue;
-          const b = bounds(worldMesh(o));
+          const b = objectBounds(o);
           const scale = o.scale.map((s) => s * k) as Vec3;
           // Keep it standing on the plate where it was.
           this.doc.update(id, { scale, position: [o.position[0], o.position[1], o.position[2] + (o.position[2] - b.min[2]) * (k - 1)] });
@@ -815,7 +855,7 @@ export class App {
     const img = this.view.snapshotPNG();
     const k = UNITS[this.prefs.unit];
     const rows = this.doc.objects.map((o) => {
-      const s = size(bounds(worldMesh(o))).map((v) => fmtNum(v / k.mm)).join(' × ');
+      const s = size(objectBounds(o)).map((v) => fmtNum(v / k.mm)).join(' × ');
       return `<tr><td>${escapeHtml(o.name)}</td><td>${s} ${k.short}</td></tr>`;
     }).join('');
     const frame = h('iframe', { style: 'position:fixed;width:0;height:0;border:0' });
@@ -836,10 +876,12 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
    * (strictly: boxes that only touch do not count; the test is on boxes, not on the surfaces).
    */
   private overlapsOther(o: SceneObject): boolean {
-    const a = worldBounds([o]);
+    // Approximate boxes (local box corners transformed): only an enable state, not worth walking
+    // every vertex of every object at each refresh.
+    const a = approxBounds(o);
     return this.doc.objects.some((p) => {
       if (p.id === o.id) return false;
-      const b = worldBounds([p]);
+      const b = approxBounds(p);
       return [0, 1, 2].every((k) => a.min[k] < b.max[k] && b.min[k] < a.max[k]);
     });
   }
@@ -903,7 +945,7 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
   dropToPlate(): void {
     this.doc.checkpoint();
     for (const o of this.doc.selected) {
-      const b = bounds(worldMesh(o));
+      const b = objectBounds(o);
       this.doc.update(o.id, { position: [o.position[0], o.position[1], o.position[2] - b.min[2]] });
     }
     this.doc.emit();
@@ -1052,7 +1094,7 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
       const tool = sel[0];
       const tw = worldMesh(tool), tb = bounds(tw);
       const overlaps = (o: SceneObject) => {
-        const b = bounds(worldMesh(o));
+        const b = objectBounds(o);
         return [0, 1, 2].every((k) => b.min[k] < tb.max[k] && tb.min[k] < b.max[k]);
       };
       const targets = this.doc.objects.filter((o) => o.id !== tool.id && overlaps(o));
@@ -1243,7 +1285,7 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
       h('div', { class: 'set-block' }, h('div', {}, `3D Assembler ${APP_VERSION}`), h('div', {}, 'Logiciel libre (MIT)'),
         h('button', { class: 'set-link', onclick: () => this.showAbout() }, 'À propos'),
         this.updateBlock()),
-      sw('Rechercher les mises à jour au démarrage', this.prefs.checkUpdates, (v) => { this.prefs.checkUpdates = v; save(); }),
+      sw('Rechercher les mises à jour au démarrage', this.prefs.updateCheck, (v) => { this.prefs.updateCheck = v; save(); }),
       h('div', { class: 'set-block' }, h('div', { class: 'set-title' }, 'Plateau d’impression'), bedIn('x', 'Largeur'), bedIn('y', 'Profondeur'), bedIn('z', 'Hauteur')));
     this.viewEl.append(panel);
     // The panel closes with the menu.
@@ -1271,24 +1313,46 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     return h('div', {}, btn, out);
   }
 
-  /** Desktop: the installer of this system, run over the installed version. Web: a reload. */
+  /** Desktop: installs the latest release. Web: a reload (the page is always the latest). */
   private updateAction(u: UpdateInfo): HTMLElement {
     const desktop = 'assemblerDesktop' in window;
-    return h('button', { class: 'set-link', onclick: () => (desktop ? window.open(u.download, '_blank', 'noopener') : location.reload()) },
-      desktop ? 'Télécharger l’installateur' : 'Recharger la page');
+    return h('button', { class: 'set-link', onclick: () => (desktop ? void this.installUpdate(u) : location.reload()) },
+      desktop ? 'Mettre à jour' : 'Recharger la page');
   }
 
-  /** Check at startup, when turned on in the settings: a message only if a new version exists. */
+  /** Downloads and installs the latest release through the desktop app (checked against its fingerprint). */
+  private async installUpdate(u: UpdateInfo): Promise<void> {
+    const bridge = (window as unknown as { assemblerDesktop?: { installUpdate?: () => Promise<string> } }).assemblerDesktop;
+    if (!bridge?.installUpdate) { window.open(u.download, '_blank', 'noopener'); return; }
+    const wait = this.toast('Téléchargement de la mise à jour…', 'info', undefined, true);
+    try {
+      const r = await bridge.installUpdate();
+      wait.remove();
+      if (r === 'opened') this.toast('Glissez 3D Assembler dans le dossier Applications pour remplacer l’ancienne version, puis rouvrez-le.', 'info', undefined, true);
+      else if (r === 'installing') this.toast('Installation… 3D Assembler va redémarrer.', 'info', undefined, true);
+    } catch {
+      wait.remove();
+      this.toast('La mise à jour n’a pas pu être installée. Téléchargez-la depuis la page des versions.', 'warn', { label: 'Ouvrir la page', run: () => window.open(RELEASES_PAGE, '_blank', 'noopener') }, true);
+    }
+  }
+
+  /**
+   * Check at startup (desktop app; the web version is always the latest): a banner like the repair
+   * one when a newer version exists, « Mettre à jour » installs it, the cross hides it for that version.
+   */
   private async startupUpdateCheck(): Promise<void> {
-    if (!this.prefs.checkUpdates) return;
+    if (!this.prefs.updateCheck || !('assemblerDesktop' in window)) return;
     try {
       const u = await checkForUpdate();
-      if (!u.newer) return;
-      const desktop = 'assemblerDesktop' in window;
-      this.toast(`3D Assembler ${u.latest} est disponible.`, 'info', {
-        label: desktop ? 'Télécharger' : 'Recharger',
-        run: () => (desktop ? window.open(u.download, '_blank', 'noopener') : location.reload()),
+      if (!u.newer || this.prefs.skippedVersion === u.latest) return;
+      const el = this.toast(`Vous n’avez pas la dernière version de 3D Assembler (${u.latest} est disponible).`, 'warn', {
+        label: 'Mettre à jour',
+        run: () => void this.installUpdate(u),
       }, true);
+      el.querySelector('.x')?.addEventListener('click', () => {
+        this.prefs.skippedVersion = u.latest;
+        try { localStorage.setItem('3dbr.prefs', JSON.stringify(this.prefs)); } catch { /* storage unavailable */ }
+      });
     } catch { /* offline: no message */ }
   }
 

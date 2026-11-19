@@ -3,6 +3,9 @@
 // non-interlaced.
 import { unzlibSync, zlibSync } from 'fflate';
 
+/** Largest texture accepted (sides and pixel count). */
+export const MAX_SIDE = 16384, MAX_PIXELS = 64e6;
+
 const CRC = (() => {
   const t = new Uint32Array(256);
   for (let n = 0; n < 256; n++) {
@@ -64,11 +67,15 @@ export function decodePNG(bytes: Uint8Array): { width: number; height: number; d
   }
   const channels = ({ 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 } as Record<number, number>)[type];
   if (depth !== 8 || interlace || !channels || !width || !height) return null;
+  // Bounded size: a tiny crafted file cannot ask for gigabytes.
+  if (width > MAX_SIDE || height > MAX_SIDE || width * height > MAX_PIXELS) return null;
   const all = new Uint8Array(idat.reduce((s, p) => s + p.length, 0));
   let k = 0;
   for (const p of idat) { all.set(p, k); k += p.length; }
-  const raw = unzlibSync(all);
   const stride = width * channels;
+  let raw: Uint8Array;
+  try { raw = unzlibSync(all, { out: new Uint8Array((stride + 1) * height) }); } catch { return null; }
+  if (raw.length < (stride + 1) * height) return null;
   const px = new Uint8Array(stride * height);
   for (let y = 0; y < height; y++) {
     const f = raw[y * (stride + 1)];

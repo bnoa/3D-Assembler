@@ -1,12 +1,39 @@
-// Session recovery, as 3D Builder does it: while the scene has unsaved changes, a 3MF copy of it is
+// Session recovery, as 3D Builder does it: while the scene has unsaved changes, a copy of it is
 // kept per window (here: one IndexedDB entry per browser tab). At start-up, a copy whose tab is no
 // longer open (its Web Lock is not held) is offered: Continuer reloads it, Ignorer throws it away.
+// 3D Builder writes a 3MF; here the copy is the scene's own arrays (stored by structured clone,
+// no XML nor zip on the main thread). Copies written by older versions hold a 3MF blob (data).
+import type { MaterialKind, ModelInfo, Vec3 } from '../core/model';
+import type { ObjectTexture } from '../core/texture-data';
+
+/** One object as the scene holds it: mesh in its own frame and its transform. */
+export interface RecoveryObject {
+  name: string;
+  color: string;
+  positions: Float32Array;
+  indices: Uint32Array;
+  position: Vec3;
+  rotation: Vec3;
+  scale: Vec3;
+  faceColors?: Uint32Array;
+  material?: MaterialKind;
+  texture?: ObjectTexture;
+  selfIntersections?: number;
+}
+
+export interface RecoveryScene {
+  info: ModelInfo;
+  objects: RecoveryObject[];
+}
 
 export interface RecoveryEntry {
   session: string;
   name: string;
   date: number;
-  data: Blob;
+  /** Current copies: the scene itself. */
+  scene?: RecoveryScene;
+  /** Copies from older versions: a 3MF of the scene. */
+  data?: Blob;
 }
 
 const DB = '3dbr-recovery';
@@ -52,15 +79,25 @@ export function recoverySession(): string {
   return session;
 }
 
-/** Keeps `data` (a 3MF of the scene) as this tab's recovery copy. */
-export async function saveRecovery(name: string, data: Blob): Promise<void> {
-  try { await run('readwrite', (s) => s.put({ session: recoverySession(), name, date: Date.now(), data } satisfies RecoveryEntry)); } catch { /* storage unavailable */ }
+/** Keeps `scene` as this tab's recovery copy (true when written). */
+export async function saveRecovery(name: string, scene: RecoveryScene): Promise<boolean> {
+  try {
+    await run('readwrite', (s) => s.put({ session: recoverySession(), name, date: Date.now(), scene } satisfies RecoveryEntry));
+    return true;
+  } catch {
+    return false; // storage unavailable or full
+  }
 }
 
 /** Copies left by tabs that are no longer open, newest first. */
 export async function orphanRecoveries(): Promise<RecoveryEntry[]> {
   try {
-    const all = (await run('readonly', (s) => s.getAll())) as RecoveryEntry[];
+    // Entries neither format can read (damaged, or from an unknown version) are dropped.
+    const all = ((await run('readonly', (s) => s.getAll())) as RecoveryEntry[]).filter((e) => {
+      if (e && typeof e.session === 'string' && (e.scene?.objects || e.data instanceof Blob)) return true;
+      if (e && typeof e.session === 'string') void clearRecovery(e.session);
+      return false;
+    });
     let held = new Set<string>();
     try { held = new Set(((await navigator.locks?.query())?.held ?? []).map((l) => l.name ?? '')); } catch { /* no Web Locks */ }
     const mine = recoverySession();

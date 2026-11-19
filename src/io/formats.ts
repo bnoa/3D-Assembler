@@ -8,6 +8,26 @@ import { VRMLLoader } from 'three/addons/loaders/VRMLLoader.js';
 import { GLTFExporter } from 'three/addons/exporters/GLTFExporter.js';
 import { type MeshData, fromTriangleSoup, merged } from '../core/mesh-data';
 import { read3MF, write3MF, type ThreeMFInfo } from './threemf';
+import { LoadingManager } from 'three';
+import { MAX_PIXELS, MAX_SIDE } from './png';
+
+/**
+ * Loader manager that keeps a model to what it contains: links to outside files or addresses
+ * (glTF buffers and images, VRML textures) are not fetched, so opening a file sends no request.
+ */
+/** A .gltf whose data lives in other files (or on the web) cannot be read: they are never fetched. */
+function refuseExternal(text: string): void {
+  let j: { buffers?: { uri?: string }[]; images?: { uri?: string }[] };
+  try { j = JSON.parse(text); } catch { return; }
+  const outside = [...(j.buffers ?? []), ...(j.images ?? [])].some((x) => typeof x?.uri === 'string' && !/^data:/i.test(x.uri));
+  if (outside) throw new Error('Ce fichier glTF dépend d’autres fichiers, qui ne sont pas lus. Ouvrez plutôt la version .glb (tout en un seul fichier).');
+}
+
+function embeddedOnly(): LoadingManager {
+  const m = new LoadingManager();
+  m.setURLModifier((u) => (/^(data|blob):/i.test(u) ? u : 'data:,'));
+  return m;
+}
 import { type ObjectTexture, compactTexture } from '../core/texture-data';
 
 export interface ImportedObject {
@@ -50,10 +70,11 @@ export async function importFile(file: File): Promise<ImportedObject[]> {
     case 'obj':
       return [{ name, mesh: objectToMesh(new OBJLoader().parse(new TextDecoder().decode(buf)), true) }];
     case 'wrl':
-      return [{ name, mesh: objectToMesh(new VRMLLoader().parse(new TextDecoder().decode(buf), ''), true) }];
+      return [{ name, mesh: objectToMesh(new VRMLLoader(embeddedOnly()).parse(new TextDecoder().decode(buf), ''), true) }];
     case 'glb':
     case 'gltf': {
-      const gltf = await new GLTFLoader().parseAsync(ext === 'glb' ? buf : new TextDecoder().decode(buf), '');
+      if (ext === 'gltf') refuseExternal(new TextDecoder().decode(buf));
+      const gltf = await new GLTFLoader(embeddedOnly()).parseAsync(ext === 'glb' ? buf : new TextDecoder().decode(buf), '');
       return [{ name, mesh: objectToMesh(gltf.scene, true), color: firstColor(gltf.scene) }];
     }
     default:
@@ -113,6 +134,7 @@ export async function decodeTextures(objs: { texture?: ObjectTexture }[]): Promi
       if (!img.source) continue;
       try {
         const bmp = await createImageBitmap(new Blob([img.source.bytes as BlobPart], { type: img.source.type }));
+        if (bmp.width > MAX_SIDE || bmp.height > MAX_SIDE || bmp.width * bmp.height > MAX_PIXELS) { bmp.close(); continue; }
         const c = document.createElement('canvas');
         c.width = bmp.width;
         c.height = bmp.height;

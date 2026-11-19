@@ -31,8 +31,27 @@ export interface ThreeMFObject {
 const NO_PAINT = 0xffffffff;
 const hexInt = (c: string) => parseInt(c.replace('#', '').slice(0, 6), 16);
 
+/** Size limits of a 3MF package: one part, and all the parts read together. */
+const MAX_PART = 512 * 1024 * 1024, MAX_TOTAL = 1024 * 1024 * 1024;
+
+/**
+ * Unzips the parts a 3MF reader uses (relationships, content types, models, images), refusing
+ * packages whose declared sizes are out of reach, so that a small crafted file cannot exhaust memory.
+ */
+export function unzip3MF(data: Uint8Array): Record<string, Uint8Array> {
+  let total = 0;
+  return unzipSync(data, {
+    filter: (f) => {
+      if (!/.(rels|xml|model|png|jpe?g)$/i.test(f.name)) return false;
+      total += f.originalSize;
+      if (f.originalSize > MAX_PART || total > MAX_TOTAL) throw new Error('Fichier 3MF trop volumineux ou endommagé.');
+      return true;
+    },
+  });
+}
+
 export function read3MF(data: Uint8Array): ThreeMFObject[] {
-  const files = unzipSync(data);
+  const files = unzip3MF(data);
   const modelPath = findModelPath(files);
   const xml = new DOMParser().parseFromString(strFromU8(files[modelPath]), 'application/xml');
   const model = xml.documentElement;
@@ -176,7 +195,7 @@ export type ThreeMFInfo = Record<(typeof INFO_KEYS)[number][0], string>;
 
 /** The model metadata of a 3MF file (empty strings when absent). */
 export function read3MFInfo(data: Uint8Array): ThreeMFInfo {
-  const files = unzipSync(data);
+  const files = unzip3MF(data);
   const xml = new DOMParser().parseFromString(strFromU8(files[findModelPath(files)]), 'application/xml');
   const meta = new Map(all(xml.documentElement, 'metadata').map((m) => [m.getAttribute('name') ?? '', m.textContent ?? '']));
   return Object.fromEntries(INFO_KEYS.map(([k, n]) => [k, meta.get(n) ?? ''])) as ThreeMFInfo;

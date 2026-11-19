@@ -2,7 +2,7 @@
 // Pages: network first (new versions show up at once), the cached copy when offline.
 // Other same-origin files (scripts, styles, WASM, icons; their names carry a content hash):
 // cache first, filled as they are used, and refreshed in the background.
-const CACHE = 'assembler-v2';
+const CACHE = 'assembler-v3';
 const ROOT = new URL('./', self.location).href; // the folder of the app
 const SHELL = [ROOT, ROOT + 'manifest.webmanifest', ROOT + 'icons/icon-192.png', ROOT + 'icons/icon-512.png'];
 
@@ -25,7 +25,11 @@ self.addEventListener('fetch', (e) => {
   if (req.mode === 'navigate') {
     e.respondWith(
       fetch(req)
-        .then((res) => { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(ROOT, copy)); return res; })
+        .then((res) => {
+          // Only the app's own page becomes the offline copy (not an error page of another address).
+          if (res.ok && (url.href === ROOT || url.href === ROOT + 'index.html')) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(ROOT, copy)); }
+          return res;
+        })
         .catch(() => caches.match(ROOT)),
     );
     return;

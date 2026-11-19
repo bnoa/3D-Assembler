@@ -24,7 +24,9 @@ export function toEnglish(text: string): string {
   const t = text.trim();
   if (!t) return text;
   let out = exact.get(t);
-  if (out === undefined) {
+  // Patterns only on short texts: a long text (an object name read from a file, for example)
+  // could make the placeholder matching very slow.
+  if (out === undefined && t.length <= 400) {
     for (const p of patterns) {
       const m = t.match(p.re);
       if (!m) continue;

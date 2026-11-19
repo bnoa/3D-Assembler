@@ -128,7 +128,19 @@
     },
     "deb": {
       "artifactName": "3D-Assembler-Linux-x64.${ext}"
-    }
+    },
+    "electronFuses": {
+      "runAsNode": false,
+      "enableCookieEncryption": true,
+      "enableNodeOptionsEnvironmentVariable": false,
+      "enableNodeCliInspectArguments": false,
+      "enableEmbeddedAsarIntegrityValidation": true,
+      "onlyLoadAppFromAsar": true
+    },
+    "electronLanguages": [
+      "en-US",
+      "fr"
+    ]
   },
   "license": "MIT"
 }
