@@ -42,16 +42,25 @@ function createWindow() {
   win.webContents.on('did-finish-load', () => { const p = pending; pending = []; sendFiles(p); });
   // Unsaved scene: the page asks to stay (beforeunload); confirm as the browser would.
   win.webContents.on('will-prevent-unload', (e) => {
+    const fr = app.getLocale().toLowerCase().startsWith('fr');
     const choice = dialog.showMessageBoxSync(win, {
-      type: 'question', buttons: ['Quit', 'Cancel'], defaultId: 1, cancelId: 1,
-      title: '3D Assembler', message: 'The scene has unsaved changes.', detail: 'Quit anyway?',
+      type: 'question', buttons: fr ? ['Quitter', 'Annuler'] : ['Quit', 'Cancel'], defaultId: 1, cancelId: 1,
+      title: '3D Assembler',
+      message: fr ? 'La scène a des modifications non enregistrées.' : 'The scene has unsaved changes.',
+      detail: fr ? 'Quitter quand même ?' : 'Quit anyway?',
     });
     if (choice === 0) e.preventDefault();
   });
-  // Links to other sites open in the default browser.
+  // Links to other sites open in the default browser (https only); the window never leaves the app.
+  const openOutside = (url) => { if (/^https:\/\//i.test(url)) void shell.openExternal(url); };
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (!url.startsWith(HOST)) void shell.openExternal(url);
-    return { action: url.startsWith(HOST) ? 'allow' : 'deny' };
+    if (!url.startsWith(HOST + '/')) openOutside(url);
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url.startsWith(HOST + '/')) return;
+    e.preventDefault();
+    openOutside(url);
   });
   void win.loadURL(`${HOST}/index.html`);
 }
@@ -69,7 +78,8 @@ if (!app.requestSingleInstanceLock()) {
     protocol.handle('app', (req) => {
       const url = new URL(req.url);
       let file = path.normalize(path.join(DIST, decodeURIComponent(url.pathname)));
-      if (!file.startsWith(DIST) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
+      // Only files inside dist/ are served (no way out with ../).
+      if (!file.startsWith(DIST + path.sep) || !fs.existsSync(file) || fs.statSync(file).isDirectory()) file = path.join(DIST, 'index.html');
       return net.fetch(pathToFileURL(file).toString());
     });
     // Installed fonts for the Relief, camera for Add > Camera, clipboard; nothing else.

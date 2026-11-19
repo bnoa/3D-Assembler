@@ -14,9 +14,9 @@ const buttons = [
   ['linux', 'Linux', 'AppImage'],
 ];
 for (const [id, name, sub] of buttons) {
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="236" height="64" viewBox="0 0 236 64" role="img" aria-label="Download for ${name}">
-  <rect width="236" height="64" rx="10" fill="#0a74b4"/>
-  <rect x="1" y="1" width="234" height="62" rx="9" fill="none" stroke="#3fb6ef" stroke-opacity=".55"/>
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="260" height="64" viewBox="0 0 260 64" role="img" aria-label="Download for ${name}">
+  <rect width="260" height="64" rx="10" fill="#0a74b4"/>
+  <rect x="1" y="1" width="258" height="62" rx="9" fill="none" stroke="#3fb6ef" stroke-opacity=".55"/>
   <g transform="translate(18 20)">${icons[id]}</g>
   <text x="56" y="29" fill="#fff" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="17" font-weight="600">Download for ${name}</text>
   <text x="56" y="47" fill="#d3ecfa" font-family="Segoe UI, Helvetica, Arial, sans-serif" font-size="12.5">${sub}</text>

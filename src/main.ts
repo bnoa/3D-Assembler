@@ -23,9 +23,13 @@ try {
   root.innerHTML = '';
   const box = document.createElement('div');
   box.style.cssText = 'max-width:520px;margin:15vh auto;padding:24px;font:16px "Segoe UI",system-ui,sans-serif;color:#eceef1;background:#2f3135;line-height:1.5';
+  // The preferences may not be readable here: the language of the system decides.
+  const fr = (navigator.language || 'en').toLowerCase().startsWith('fr');
   box.innerHTML = webgl
-    ? '<h2 style="margin-top:0;font-weight:400">Vue 3D indisponible</h2><p>Le navigateur n’a pas pu créer de contexte WebGL. Fermez cet onglet puis rouvrez la page ; si le problème persiste, redémarrez le navigateur ou activez l’accélération graphique dans ses paramètres.</p>'
-    : '<h2 style="margin-top:0;font-weight:400">Démarrage impossible</h2><p></p>';
+    ? fr
+      ? '<h2 style="margin-top:0;font-weight:400">Vue 3D indisponible</h2><p>Le navigateur n’a pas pu créer de contexte WebGL. Fermez cet onglet puis rouvrez la page ; si le problème persiste, redémarrez le navigateur ou activez l’accélération graphique dans ses paramètres.</p>'
+      : '<h2 style="margin-top:0;font-weight:400">3D view unavailable</h2><p>The browser could not create a WebGL context. Close this tab and open the page again; if it still fails, restart the browser or turn on hardware acceleration in its settings.</p>'
+    : `<h2 style="margin-top:0;font-weight:400">${fr ? 'Démarrage impossible' : 'Could not start'}</h2><p></p>`;
   if (!webgl) box.querySelector('p')!.textContent = String(e);
   root.append(box);
   throw e;

@@ -33,6 +33,9 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'help', label: 'Aide' },
 ];
 
+/** Text safe to put in HTML (names come from file names). */
+const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+
 export const UNITS = {
   micron: { label: 'Micron', short: 'µm', mm: 0.001 },
   mm: { label: 'Millimètre', short: 'mm', mm: 1 },
@@ -808,16 +811,16 @@ export class App {
     const k = UNITS[this.prefs.unit];
     const rows = this.doc.objects.map((o) => {
       const s = size(bounds(worldMesh(o))).map((v) => fmtNum(v / k.mm)).join(' × ');
-      return `<tr><td>${o.name.replace(/</g, '&lt;')}</td><td>${s} ${k.short}</td></tr>`;
+      return `<tr><td>${escapeHtml(o.name)}</td><td>${s} ${k.short}</td></tr>`;
     }).join('');
     const frame = h('iframe', { style: 'position:fixed;width:0;height:0;border:0' });
     document.body.append(frame);
     const d = frame.contentDocument!;
     d.open();
-    d.write(`<!doctype html><html lang="${currentLang()}"><head><meta charset="utf-8"><title>${this.doc.name}</title>
+    d.write(`<!doctype html><html lang="${currentLang()}"><head><meta charset="utf-8"><title>${escapeHtml(this.doc.name)}</title>
 <style>body{font-family:"Segoe UI",system-ui,sans-serif;margin:24px}img{max-width:100%;border:1px solid #ccc}
 table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom:1px solid #ddd}</style></head>
-<body><h1>${this.doc.name.replace(/</g, '&lt;')}</h1><img src="${img}" alt=""><table>${rows}</table></body></html>`);
+<body><h1>${escapeHtml(this.doc.name)}</h1><img src="${img}" alt=""><table>${rows}</table></body></html>`);
     d.close();
     frame.contentWindow!.onafterprint = () => frame.remove();
     setTimeout(() => frame.contentWindow!.print(), 200);
