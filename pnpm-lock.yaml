@@ -14,9 +14,6 @@ importers:
       manifold-3d:
         specifier: 3.5.5
         version: 3.5.5(@gltf-transform/core@4.5.1)(@gltf-transform/extensions@4.5.1)(@gltf-transform/functions@4.5.1(@types/node@22.20.5))(esbuild-wasm@0.27.7)
-      straight-skeleton:
-        specifier: ^3.0.0
-        version: 3.0.0
       three:
         specifier: 0.187.0
         version: 0.187.0
@@ -1504,9 +1501,6 @@ packages:
 
   std-env@4.3.0:
     resolution: {integrity: sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==}
-
-  straight-skeleton@3.0.0:
-    resolution: {integrity: sha512-XwL1vGE5L/S5BxWS9qEK4sKIo0BEzthKYkR9f9Yz/2Twtz/mIejc5khnTkEO12R2q/QndSsLnQ1gzsQ7STTSxw==}
 
   string-width@4.2.3:
     resolution: {integrity: sha512-wKyQRQpjJ0sIp62ErSZdGsjMJWsap5oRNihHhu6G7JVO/9jIB6UyevL+tXuOqrng8j/cxKTWyWUwvSTriiZz/g==}
@@ -3279,8 +3273,6 @@ snapshots:
   stat-mode@1.0.0: {}
 
   std-env@4.3.0: {}
-
-  straight-skeleton@3.0.0: {}
 
   string-width@4.2.3:
     dependencies:

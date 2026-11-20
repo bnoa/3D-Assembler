@@ -11,6 +11,7 @@ import { separateNonManifold, stitchSoup } from '../repair/repair';
 import { splitSlivers } from '../repair/wrap';
 import { loadManifold } from './csg';
 import { simplifyFlat } from './decimate';
+import { type Skeleton, straightSkeleton } from './straight-skeleton';
 
 type V3 = [number, number, number];
 type V2 = [number, number];
@@ -635,16 +636,6 @@ interface Roof {
   cap: number;
 }
 
-let skeletonReady: Promise<typeof import('straight-skeleton').SkeletonBuilder> | null = null;
-function skeletonBuilder() {
-  // The package is a webpack UMD bundle that expects `self` (absent under Node, in the tests).
-  (globalThis as { self?: unknown }).self ??= globalThis;
-  skeletonReady ??= import('straight-skeleton').then(async (m) => {
-    if (!(m.SkeletonBuilder as unknown as { module?: unknown }).module) await m.SkeletonBuilder.init();
-    return m.SkeletonBuilder;
-  });
-  return skeletonReady;
-}
 
 const rectOf = (p: Polygon): Rect => {
   const r = { x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity };
@@ -665,12 +656,11 @@ const signedArea = (p: Polygon) => {
 };
 
 /**
- * 3D Builder's bevel: the straight skeleton of the motif (CGAL) gives a roof whose height is the
+ * 3D Builder's bevel: the straight skeleton of the motif gives a roof whose height is the
  * skeleton time (45°), cut flat at the depth. Each connected part of the motif (outer contour and
  * its holes) is skeletonised separately.
  */
 async function buildRoof(wasm: ManifoldToplevel, motif: CrossSection, depthMm: number, fraction?: number): Promise<Roof> {
-  const SB = await skeletonBuilder();
   const facets: Facet[] = [];
   const plateaus: CrossSection[] = [];
   const parts = motif.decompose();
@@ -679,13 +669,13 @@ async function buildRoof(wasm: ManifoldToplevel, motif: CrossSection, depthMm: n
     for (const part of parts) {
       let partTop = 0;
       const first = facets.length;
-      // CGAL rejects some inputs: rings with collinear points (Moore tracing leaves one at its
-      // start pixel) or nearly degenerate corners. Retry with a slightly stronger cleanup.
+      // Some inputs defeat the skeleton: rings with collinear points (Moore tracing leaves one at
+      // its start pixel) or nearly degenerate corners. Retry with a slightly stronger cleanup.
       const ext = Math.sqrt(Math.max(part.area(), 1e-12));
-      let sk: ReturnType<typeof SB.buildFromPolygon> = null;
+      let sk: Skeleton | null = null;
       const area = part.area();
       // Pinhole holes (a pixel or two left inside a stroke, under 0.1 % of the part) are dropped:
-      // CGAL can spend seconds on them and then fail.
+      // they only add tiny faces and can defeat the skeleton.
       attempts: for (const [eps, minHole] of [[1e-9, 1e-3], [1e-5, 1e-3], [1e-4, 1e-3], [1e-3, 1e-2], [3e-3, 1e-2]]) {
         const clean = part.simplify(eps * ext);
         const rings = (clean.toPolygons() as unknown as Polygon[]).filter((r) => r.length >= 3 && (signedArea(r) > 0 || -signedArea(r) >= minHole * area));
@@ -693,21 +683,15 @@ async function buildRoof(wasm: ManifoldToplevel, motif: CrossSection, depthMm: n
         if (!rings.length) break;
         // Outer ring counter-clockwise first, holes clockwise; each ring closed.
         rings.sort((a, b) => signedArea(b) - signedArea(a));
-        // Centred on the part and brought to a fixed size: the binding's tolerances depend on
-        // the coordinates' magnitude. Other scales are tried if CGAL still gives up.
+        // Centred on the part and brought to a fixed size (the tolerances are relative to it).
+        // Other scales are tried if the skeleton still fails.
         const bb = rectOf(rings[0]);
         const cx = (bb.x0 + bb.x1) / 2, cy = (bb.y0 + bb.y1) / 2;
         const half = Math.max(bb.x1 - bb.x0, bb.y1 - bb.y0) / 2 || 1;
         for (const target of [1000, 100, 10000, 10]) {
           const s = target / half;
           const close = (r: Polygon) => [...r, r[0]].map(([x, y]) => [(x - cx) * s, (y - cy) * s]);
-          try {
-            sk = SB.buildFromPolygon(rings.map(close));
-          } catch {
-            // A CGAL assertion aborts the Wasm instance: start a fresh one.
-            sk = null;
-            await SB.init();
-          }
+          sk = straightSkeleton(rings.map(close));
           if (sk) {
             for (const v of sk.vertices) { v[0] = v[0] / s + cx; v[1] = v[1] / s + cy; v[2] /= s; }
             break attempts;

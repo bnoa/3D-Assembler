@@ -7,18 +7,8 @@ import { makePrimitive } from '../src/geometry/primitives';
 import { analyze } from '../src/repair/analyze';
 import { loadManifold } from '../src/geometry/csg';
 
-// straight-skeleton's Wasm only runs "on the web": load it with a stand-in `window`.
 beforeAll(async () => {
   await loadManifold();
-  const g = globalThis as { window?: unknown; self?: unknown };
-  g.self ??= globalThis;
-  g.window = globalThis;
-  try {
-    const { SkeletonBuilder } = await import('straight-skeleton');
-    await SkeletonBuilder.init();
-  } finally {
-    delete g.window;
-  }
 });
 
 // Reads the fonts installed with Windows (not copied into the project); skipped elsewhere.

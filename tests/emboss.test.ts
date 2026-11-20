@@ -5,19 +5,8 @@ import { analyze } from '../src/repair/analyze';
 import { bounds, signedVolume } from '../src/core/mesh-data';
 import { loadManifold } from '../src/geometry/csg';
 
-// straight-skeleton's Wasm build only runs "on the web": load it once with a stand-in `window`
-// (after manifold-3d, which must keep its Node loader).
 beforeAll(async () => {
   await loadManifold();
-  const g = globalThis as { window?: unknown; self?: unknown };
-  g.self ??= globalThis;
-  g.window = globalThis;
-  try {
-    const { SkeletonBuilder } = await import('straight-skeleton');
-    await SkeletonBuilder.init();
-  } finally {
-    delete g.window;
-  }
 });
 
 const square = (s: number): Polygon[] => [[[-s / 2, -s / 2], [s / 2, -s / 2], [s / 2, s / 2], [-s / 2, s / 2]]];
