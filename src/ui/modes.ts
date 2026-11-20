@@ -14,6 +14,7 @@ import { TEXTURES, type TexturePixels, WALLPAPER_DEFAULTS, padImage, proceduralT
 import { type ObjectTexture, type TextureImage, compactTexture, emptyTexture, imageIndex } from '../core/texture-data';
 import { IMAGE_DEFAULTS, type ImageMode, contourLevels, imageData, imageTexture, insertImage } from '../geometry/image-insert';
 import * as csg from '../geometry/csg';
+import { hollowAsync } from '../workers/client';
 import { type Direction, type EmbossResult, type Motif, PROJECTIONS, type Projection, SHAPES, emboss, motifOutline } from '../geometry/emboss';
 import { encodeQr, qrImage } from '../geometry/qr';
 import { canReadSystemFonts, registerFontFile, systemFontFamilies } from '../geometry/font-outline';
@@ -991,7 +992,7 @@ export const MODES: Record<string, ModeSpec> = {
       const val = h('span', {}, `${hollowThickness.toFixed(1)} mm`);
       const run = previewer(ctx, async () => {
         // Every selected object is hollowed, as 3D Builder.
-        const ms = await Promise.all(ctx.world.map((w) => csg.hollow(w, st(ctx, 't', 1))));
+        const ms = await Promise.all(ctx.world.map((w) => hollowAsync(w, st(ctx, 't', 1))));
         set(ctx, 'result', ms);
         // 3D Builder shows the hollowed object translucent blue, the cavity visible inside.
         return ms.map((m) => ({ mesh: m, color: '#6fa8f0', opacity: 0.5 }));
@@ -1003,7 +1004,7 @@ export const MODES: Record<string, ModeSpec> = {
       run(0);
     },
     async apply(ctx) {
-      const ms = st<MeshData[] | null>(ctx, 'result', null) ?? (await Promise.all(ctx.world.map((w) => csg.hollow(w, st(ctx, 't', 1)))));
+      const ms = st<MeshData[] | null>(ctx, 'result', null) ?? (await Promise.all(ctx.world.map((w) => hollowAsync(w, st(ctx, 't', 1)))));
       ctx.app.replaceObjects(ctx.selection, ms.map((m) => [m]));
       return true;
     },

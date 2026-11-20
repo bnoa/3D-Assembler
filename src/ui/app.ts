@@ -7,7 +7,7 @@ import { PRIMITIVES, PRIMITIVE_COLORS, makePrimitive, type PrimitiveKind } from 
 import * as csg from '../geometry/csg';
 import { type SolidRepairLog, splitShells } from '../repair/solid';
 import { analyze } from '../repair/analyze';
-import { repairAsync, selfIntersectionsAsync } from '../workers/client';
+import { booleanAsync, repairAsync, selfIntersectionsAsync } from '../workers/client';
 import { shells } from '../repair/topology';
 import { nearestFaces, transferFaceColors } from '../repair/colors';
 import { type ObjectTexture, mergeTextures, transferTexture } from '../core/texture-data';
@@ -1082,7 +1082,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
         const list: (MeshData | null)[] = sel.map(worldMesh);
         for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
           if (!list[i] || !list[j]) continue;
-          const u = await csg.booleanPair(list[i]!, list[j]!, 'union');
+          const u = await booleanAsync(list[i]!, list[j]!, 'union');
           if (u.indices.length && analyze(u).shells === 1) { list[j] = u; list[i] = null; break; }
         }
         const parts = list.filter((m): m is MeshData => !!m);
@@ -1094,7 +1094,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
         return;
       }
       if (op === 'intersect') {
-        const result = await csg.booleanPair(worldMesh(sel[0]), worldMesh(sel[1]), 'intersect');
+        const result = await booleanAsync(worldMesh(sel[0]), worldMesh(sel[1]), 'intersect');
         this.doc.checkpoint();
         this.doc.remove(sel.map((x) => x.id));
         if (result.indices.length < 3) { this.toast('Les deux objets n’ont aucune partie commune.', 'warn'); return; }
@@ -1113,7 +1113,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
       if (!targets.length) return void this.toast('L’objet sélectionné ne touche aucun autre objet.', 'warn');
       const results: MeshData[][] = [];
       for (const t of targets) {
-        const r = await csg.booleanPair(worldMesh(t), tw, 'subtract');
+        const r = await booleanAsync(worldMesh(t), tw, 'subtract');
         results.push(r.indices.length < 12 ? [] : splitShells(r));
       }
       this.doc.checkpoint();

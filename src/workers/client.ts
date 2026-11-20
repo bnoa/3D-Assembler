@@ -2,6 +2,8 @@
 import type { MeshData } from '../core/mesh-data';
 import { repairSolid, type SolidRepairLog } from '../repair/solid';
 import { countSelfIntersections } from '../repair/wrap';
+import { booleanPair, hollow } from '../geometry/csg';
+import type { BooleanOp } from '../repair/wrap';
 
 let worker: Worker | null = null;
 let failed = false;
@@ -33,16 +35,40 @@ function getWorker(): Worker | null {
   return worker;
 }
 
-function call<T>(op: string, mesh: MeshData): Promise<T> {
+function call<T>(op: string, mesh: MeshData, extra: { other?: MeshData; [k: string]: unknown } = {}): Promise<T> {
   const w = getWorker();
   if (!w) return Promise.reject(new Error('worker'));
   const id = nextId++;
-  // Copies: the caller keeps its mesh (it may be shown or undone).
-  const copy = { positions: new Float32Array(mesh.positions), indices: new Uint32Array(mesh.indices) };
+  // Copies: the caller keeps its meshes (they may be shown or undone).
+  const copyOf = (m: MeshData) => ({ positions: new Float32Array(m.positions), indices: new Uint32Array(m.indices) });
+  const copy = copyOf(mesh);
+  const other = extra.other ? copyOf(extra.other) : undefined;
+  const transfer: Transferable[] = [copy.positions.buffer, copy.indices.buffer];
+  if (other) transfer.push(other.positions.buffer, other.indices.buffer);
   return new Promise<T>((resolve, reject) => {
     pending.set(id, { resolve: resolve as (v: unknown) => void, reject });
-    w.postMessage({ id, op, mesh: copy }, [copy.positions.buffer, copy.indices.buffer]);
+    w.postMessage({ ...extra, id, op, mesh: copy, ...(other ? { other } : {}) }, transfer);
   });
+}
+
+/** Fusionner / Définir une intersection / Soustraire in the worker (in place if it fails). */
+export async function booleanAsync(a: MeshData, b: MeshData, kind: BooleanOp): Promise<MeshData> {
+  try {
+    return (await call<{ mesh: MeshData }>('boolean', a, { other: b, kind })).mesh;
+  } catch (e) {
+    if ((e as Error).message !== 'worker') throw e;
+    return booleanPair(a, b, kind);
+  }
+}
+
+/** Creux in the worker (in place if it fails). */
+export async function hollowAsync(mesh: MeshData, thickness: number): Promise<MeshData> {
+  try {
+    return (await call<{ mesh: MeshData }>('hollow', mesh, { thickness })).mesh;
+  } catch (e) {
+    if ((e as Error).message !== 'worker') throw e;
+    return hollow(mesh, thickness);
+  }
 }
 
 export async function repairAsync(mesh: MeshData): Promise<{ mesh: MeshData; log: SolidRepairLog }> {
