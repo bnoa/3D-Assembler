@@ -214,18 +214,39 @@ export class Viewport {
     this.shadowCatcher.receiveShadow = true;
     this.plate.add(this.shadowCatcher);
 
-    // Rulers every 50 mm along +X and +Y.
-    for (let d = 0; d <= 300; d += 50) {
-      const lx = label(`${d} mm`);
+    this.setRulerUnit('mm', 1);
+    this.scene.add(this.plate);
+  }
+
+  private rulers: Mesh[] = [];
+  private rulerKey = '';
+
+  /**
+   * Rulers along +X and +Y in the unit of the settings, as 3D Builder (0 mm, 50 mm… or 0 po, 5 po…):
+   * a step of 5 × 10^k units, the closest to 50 mm, up to about 300 mm.
+   */
+  setRulerUnit(short: string, mmPerUnit: number): void {
+    const key = short + mmPerUnit;
+    if (key === this.rulerKey) return;
+    this.rulerKey = key;
+    for (const r of this.rulers) { this.plate.remove(r); r.geometry.dispose(); const m = r.material as MeshBasicMaterial; m.map?.dispose(); m.dispose(); }
+    this.rulers = [];
+    const target = 50 / mmPerUnit;
+    const step = 5 * 10 ** Math.round(Math.log10(target / 5));
+    const fmt = (v: number) => String(Math.round(v * 1e6) / 1e6).replace('.', ',');
+    for (let i = 0; i * step * mmPerUnit <= 300 + 1e-6 || i <= 1; i++) {
+      const d = i * step * mmPerUnit, text = `${fmt(i * step)} ${short}`;
+      const lx = label(text);
       lx.position.set(d + 2, -6, 0.2);
       this.plate.add(lx);
-      if (d > 0) {
-        const ly = label(`${d} mm`);
+      this.rulers.push(lx);
+      if (i > 0) {
+        const ly = label(text);
         ly.position.set(2, d, 0.2);
         this.plate.add(ly);
+        this.rulers.push(ly);
       }
     }
-    this.scene.add(this.plate);
   }
 
   // --- document sync -------------------------------------------------------------------------

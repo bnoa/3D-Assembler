@@ -44,8 +44,8 @@ export const UNITS = {
   micron: { label: 'Micron', short: 'µm', mm: 0.001 },
   mm: { label: 'Millimètre', short: 'mm', mm: 1 },
   cm: { label: 'Centimètre', short: 'cm', mm: 10 },
-  inch: { label: 'Pouce', short: 'in', mm: 25.4 },
-  foot: { label: 'Pied', short: 'ft', mm: 304.8 },
+  inch: { label: 'Pouce', short: 'po', mm: 25.4 }, // 3D Builder's French abbreviations (in English: in, ft)
+  foot: { label: 'Pied', short: 'pi', mm: 304.8 },
   m: { label: 'Mètre', short: 'm', mm: 1000 },
 } as const;
 export type Unit = keyof typeof UNITS;
@@ -1408,6 +1408,9 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     this.applyTheme();
     setLang(this.prefs.lang === 'auto' ? systemLang() : this.prefs.lang);
     this.view.dragOptions = { snap: this.prefs.align, collision: this.prefs.collision };
+    // The rulers on the plate are drawn text: in the unit and language of the interface.
+    const u = UNITS[this.prefs.unit];
+    this.view.setRulerUnit(currentLang() === 'en' ? toEnglish(u.short) : u.short, u.mm);
   }
 
   private applyTheme(): void {

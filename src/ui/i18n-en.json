@@ -308,5 +308,7 @@
   "Fichier de données": "Data file",
   "Fichier de données binaires obligatoire. Cliquez sur le bouton Continuer pour rechercher le fichier obligatoire :": "Binary data file required. Click Continue to look for the required file:",
   "« {0} » n’a pas été ouvert : il lui manque {1}.": "“{0}” was not opened: {1} is missing.",
-  "Fichier de données binaires manquant : {0}": "Missing binary data file: {0}"
+  "Fichier de données binaires manquant : {0}": "Missing binary data file: {0}",
+  "po": "in",
+  "pi": "ft"
 }

@@ -82,6 +82,11 @@ function barValue(axis: string, name: string, value: number, set: (v: number) =>
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') input.blur(); e.stopPropagation(); });
   return h('label', { class: `val ${axis}` }, h('small', {}, name), input);
 }
+/** A length in a tool's bar, in the unit of the settings (as 3D Builder), followed by the unit. */
+function lengthValue(ctx: ModeContext, name: string, mm: number, set: (mm: number) => void, readOnly = false): HTMLElement[] {
+  const u = ctx.app.unit();
+  return [barValue('', name, mm / u.mm, (v) => set(v * u.mm), readOnly), h('span', { class: 'unit' }, u.short)];
+}
 function barTool(on: boolean, ico: string, label: string, run: () => void): HTMLElement {
   return h('button', { class: `tool${on ? ' on' : ''}`, title: label, 'aria-label': label, html: icon(ico, 22), onclick: run });
 }
@@ -782,7 +787,7 @@ export const MODES: Record<string, ModeSpec> = {
           barTool(tmode === 'translate', 'move', 'Mouvement', () => setTool('translate')),
           barTool(tmode === 'rotate', 'rotate', 'Rotation', () => setTool('rotate')),
           ...(tmode === 'translate'
-            ? [barValue('', '', st(ctx, 'z', z0) - z0, (v) => { setZ(z0 + v); record(); syncPivot(); renderBottom(); }), h('span', { class: 'unit' }, 'mm')]
+            ? lengthValue(ctx, '', st(ctx, 'z', z0) - z0, (v) => { setZ(z0 + v); record(); syncPivot(); renderBottom(); })
             : [angle('tiltX', 'Roulis'), angle('tiltY', 'Tangage'), angle('tiltZ', 'Lacet'), h('span', { class: 'unit' }, 'deg')]),
         );
       };
@@ -909,8 +914,7 @@ export const MODES: Record<string, ModeSpec> = {
       // plane's distance from the centre of the selection (0 mm at the start), which can be typed.
       const bottom = floatingBar(ctx);
       const renderBottom = () => bottom.replaceChildren(
-        barValue('', '', st(ctx, 'limit', start) - start, (v) => { setLimit(Math.max(0, Math.min(top, start + v))); pivot.position.z = st(ctx, 'limit', start); record(); }),
-        h('span', { class: 'unit' }, 'mm'));
+        ...lengthValue(ctx, '', st(ctx, 'limit', start) - start, (v) => { setLimit(Math.max(0, Math.min(top, start + v))); pivot.position.z = st(ctx, 'limit', start); record(); }));
       const setLimit = (v: number) => { set(ctx, 'limit', v); if (!bottom.contains(document.activeElement)) renderBottom(); run(150); };
       const past: number[] = [], future: number[] = [];
       let prev = start;
@@ -1193,11 +1197,12 @@ export const MODES: Record<string, ModeSpec> = {
           h('button', { class: `tool${tmode === m ? ' on' : ''}`, title: label, 'aria-label': label, html: icon(ico, 22), onclick: () => { tmode = m; renderBottom(); } });
         const items: HTMLElement[] = [tool('move', 'move', 'Mouvement'), tool('rotate', 'rotate', 'Rotation'), tool('scale', 'scale', 'Mise à l’échelle')];
         if (tmode === 'move') {
-          items.push(val('', 'Distance', Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2, () => {}, true), h('span', { class: 'unit' }, 'mm'));
+          items.push(val('', 'Distance', Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2 / ctx.app.unit().mm, () => {}, true), h('span', { class: 'unit' }, ctx.app.unit().short));
         } else if (tmode === 'rotate') {
           items.push(val('', 'Rotation', s.rotation, (v) => { s.rotation = v; changed(); }), h('span', { class: 'unit' }, 'deg'));
         } else {
           const mm = !s.bevel;
+          const U = ctx.app.unit().mm; // sizes in the unit of the settings
           const w = lastMotifSize[0] * s.size, hh = lastMotifSize[1] * s.size * s.scaleY;
           const setX = (v: number) => {
             const px = mm ? (v / (lastMotifSize[0] * s.size || 1)) * xPct() : v;
@@ -1212,10 +1217,10 @@ export const MODES: Record<string, ModeSpec> = {
             changed();
           };
           items.push(
-            val('x', 'X', mm ? w : xPct(), setX),
-            val('y', 'Y', mm ? hh : xPct() * s.scaleY, setY),
-            val('z', 'Z', mm ? s.depth : s.bevelPct, (v) => { if (mm) { s.depth = v; clampDepth(); } else s.bevelPct = Math.max(-100, Math.min(100, v)); changed(); }),
-            h('span', { class: 'unit' }, mm ? 'mm' : '%'),
+            val('x', 'X', mm ? w / U : xPct(), (v) => setX(mm ? v * U : v)),
+            val('y', 'Y', mm ? hh / U : xPct() * s.scaleY, (v) => setY(mm ? v * U : v)),
+            val('z', 'Z', mm ? s.depth / U : s.bevelPct, (v) => { if (mm) { s.depth = v * U; clampDepth(); } else s.bevelPct = Math.max(-100, Math.min(100, v)); changed(); }),
+            h('span', { class: 'unit' }, mm ? ctx.app.unit().short : '%'),
             h('button', { class: `tool${lock ? ' on' : ''}`, title: 'Verrouiller les proportions', 'aria-label': 'Verrouiller les proportions', html: icon(lock ? 'lock' : 'unlock', 20), onclick: () => { lock = !lock; renderBottom(); } }),
           );
         }
