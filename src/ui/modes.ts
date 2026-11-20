@@ -120,18 +120,78 @@ interface EmbossState {
 /** Width and height of the last motif outline for a size of 1 (bottom bar values in mm). */
 let lastMotifSize: [number, number] = [1, 1];
 
-async function runEmboss(ctx: ModeContext, s: EmbossState): Promise<EmbossResult> {
+type Box = { min: number[]; max: number[] };
+const boxMid = (b: Box) => [0, 1, 2].map((k) => (b.min[k] + b.max[k]) / 2);
+
+/** Bounds of each selected object (world), and of the whole selection. */
+function selectionBoxes(ctx: ModeContext): { each: Box[]; all: Box } {
+  let r = st<{ each: Box[]; all: Box } | null>(ctx, 'boxes', null);
+  if (!r) {
+    const each = ctx.world.map((m) => bounds(m));
+    const all = { min: [0, 1, 2].map((k) => Math.min(...each.map((b) => b.min[k]))), max: [0, 1, 2].map((k) => Math.max(...each.map((b) => b.max[k]))) };
+    r = { each, all };
+    set(ctx, 'boxes', r);
+  }
+  return r;
+}
+
+/** Distance along a ray to a mesh (Infinity if it misses). */
+function rayDistance(m: MeshData, o: number[], d: number[]): number {
+  const P = m.positions, I = m.indices;
+  let best = Infinity;
+  for (let f = 0; f < I.length; f += 3) {
+    const a = I[f] * 3, b = I[f + 1] * 3, c = I[f + 2] * 3;
+    const e1 = [P[b] - P[a], P[b + 1] - P[a + 1], P[b + 2] - P[a + 2]], e2 = [P[c] - P[a], P[c + 1] - P[a + 1], P[c + 2] - P[a + 2]];
+    const hx = d[1] * e2[2] - d[2] * e2[1], hy = d[2] * e2[0] - d[0] * e2[2], hz = d[0] * e2[1] - d[1] * e2[0];
+    const det = e1[0] * hx + e1[1] * hy + e1[2] * hz;
+    if (Math.abs(det) < 1e-12) continue;
+    const sx = o[0] - P[a], sy = o[1] - P[a + 1], sz = o[2] - P[a + 2];
+    const u = (sx * hx + sy * hy + sz * hz) / det;
+    if (u < 0 || u > 1) continue;
+    const qx = sy * e1[2] - sz * e1[1], qy = sz * e1[0] - sx * e1[2], qz = sx * e1[1] - sy * e1[0];
+    const v = (d[0] * qx + d[1] * qy + d[2] * qz) / det;
+    if (v < 0 || u + v > 1) continue;
+    const t = (e2[0] * qx + e2[1] * qy + e2[2] * qz) / det;
+    if (t >= 0 && t < best) best = t;
+  }
+  return best;
+}
+
+/**
+ * Relief over several objects, as 3D Builder: the motif is placed on the selection as a whole
+ * (offsets from its centre) and goes on the selected object under the motif's centre, seen from
+ * the projection side; that object's own offsets.
+ */
+function embossTarget(ctx: ModeContext, s: EmbossState): { index: number; offsetU: number; offsetV: number } {
+  if (ctx.world.length === 1) return { index: 0, offsetU: s.offsetU, offsetV: s.offsetV };
+  const { each, all } = selectionBoxes(ctx);
+  const C = boxMid(all);
+  const { d, u, v } = frameOf(s.direction);
+  const far = Math.hypot(all.max[0] - all.min[0], all.max[1] - all.min[1], all.max[2] - all.min[2]) * 2 + 1;
+  const O = [0, 1, 2].map((k) => C[k] + u[k] * s.offsetU + v[k] * s.offsetV + d[k] * far);
+  let index = st(ctx, 'embossTarget', 0), bestT = Infinity;
+  ctx.world.forEach((m, i) => { const t = rayDistance(m, O, d.map((x) => -x)); if (t < bestT) { bestT = t; index = i; } });
+  set(ctx, 'embossTarget', index);
+  const c = boxMid(each[index]);
+  const delta = [0, 1, 2].map((k) => C[k] - c[k]);
+  const dt = (w: number[]) => delta[0] * w[0] + delta[1] * w[1] + delta[2] * w[2];
+  return { index, offsetU: s.offsetU + dt(u), offsetV: s.offsetV + dt(v) };
+}
+
+async function runEmboss(ctx: ModeContext, s: EmbossState): Promise<EmbossResult & { index: number }> {
   let outline = await motifOutline(s.motif, s.size);
   if (!outline.length) throw new Error('Motif vide.');
   let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
   for (const p of outline) for (const [x, y] of p) { x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); }
   lastMotifSize = [(x1 - x0) / s.size, (y1 - y0) / s.size];
   if (s.scaleY !== 1) outline = outline.map((p) => p.map(([x, y]) => [x, y * s.scaleY] as [number, number]));
-  return emboss(ctx.world[0], {
-    outline, projection: s.projection, direction: s.direction, offsetU: s.offsetU, offsetV: s.offsetV,
-    rotation: s.rotation, depth: s.depth, bevel: s.bevel, bevelHeight: s.bevelPct / 100, faceColors: ctx.selection[0].faceColors,
+  const t = embossTarget(ctx, s);
+  const r = await emboss(ctx.world[t.index], {
+    outline, projection: s.projection, direction: s.direction, offsetU: t.offsetU, offsetV: t.offsetV,
+    rotation: s.rotation, depth: s.depth, bevel: s.bevel, bevelHeight: s.bevelPct / 100, faceColors: ctx.selection[t.index].faceColors,
     topColor: s.top ? hexToInt(s.top) : undefined, sideColor: s.side ? hexToInt(s.side) : undefined,
   });
+  return { ...r, index: t.index };
 }
 
 /** 3D Builder's on / off switch: label, a pill, then « Activé » or « Désactivé ». */
@@ -938,7 +998,8 @@ export const MODES: Record<string, ModeSpec> = {
   emboss: {
     okLabel: 'Relief',
     build(ctx) {
-      const b = bounds(ctx.world[0]);
+      // Several objects: sizes and placement from the selection as a whole (see embossTarget).
+      const b = selectionBoxes(ctx).all;
       const L = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
       const s = {
         motif: { kind: 'text', text: 'abc', font: 'Segoe UI', bold: true } as Motif,
@@ -966,7 +1027,7 @@ export const MODES: Record<string, ModeSpec> = {
         const r = await runEmboss(ctx, s);
         set(ctx, 'result', r);
         refreshBottom();
-        return [{ mesh: r.mesh, color: ctx.selection[0].color, faceColors: r.faceColors }];
+        return ctx.selection.map((o, i) => (i === r.index ? { mesh: r.mesh, color: o.color, faceColors: r.faceColors } : { mesh: ctx.world[i], color: o.color, faceColors: o.faceColors, texture: o.texture }));
       });
       let recordChange = () => {};
       let refreshBottom = () => {};
@@ -1174,7 +1235,7 @@ export const MODES: Record<string, ModeSpec> = {
       window.addEventListener('keydown', onKey);
       // The motif is placed with the mouse, as in 3D Builder: a click on the object puts it there (on
       // the side the clicked face looks at), and dragging moves it on that side.
-      const wb = bounds(ctx.world[0]);
+      const wb = selectionBoxes(ctx).all;
       const centre = new Vector3((wb.min[0] + wb.max[0]) / 2, (wb.min[1] + wb.max[1]) / 2, (wb.min[2] + wb.max[2]) / 2);
       let grab: { p0: Vector3; u0: number; v0: number } | null = null;
       const onPlane = (ev: PointerEvent) => {
@@ -1284,8 +1345,8 @@ export const MODES: Record<string, ModeSpec> = {
     },
     async apply(ctx) {
       const s = st<EmbossState | null>(ctx, 'emboss', null)!;
-      const r = st<EmbossResult | null>(ctx, 'result', null) ?? (await runEmboss(ctx, s));
-      ctx.app.replaceObjects(ctx.selection, [[r.mesh]], { faceColors: [[r.faceColors]] });
+      const r = st<(EmbossResult & { index: number }) | null>(ctx, 'result', null) ?? (await runEmboss(ctx, s));
+      ctx.app.replaceObjects([ctx.selection[r.index]], [[r.mesh]], { faceColors: [[r.faceColors]] });
       return true;
     },
   },

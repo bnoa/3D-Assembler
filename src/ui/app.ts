@@ -386,7 +386,7 @@ export class App {
           this.rb('Simplifier', 'simplify', () => this.enterMode(MODES.simplify), { disabled: !n }),
           this.rb('Fractionner', 'split', () => this.enterMode(MODES.split), { disabled: !n }),
           this.rb('Lisse', 'smooth', () => this.enterMode(MODES.smooth), { disabled: !n }),
-          this.rb('Relief', 'emboss', () => this.enterMode(MODES.emboss), { disabled: n !== 1, title: 'Texte, forme ou image en relief ou gravé' }),
+          this.rb('Relief', 'emboss', () => this.enterMode(MODES.emboss), { disabled: !n, title: 'Texte, forme ou image en relief ou gravé' }),
           this.rb('Extruder vers le bas', 'extrude', () => this.enterMode(MODES.extrudeDown), { disabled: !n }),
           sep(),
           this.rb('Fusionner', 'union', () => this.boolean('union'), { disabled: !n }),
