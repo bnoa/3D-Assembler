@@ -40,6 +40,9 @@ const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', 
 /** Colour of an imported object whose file has none (3D Builder's grey). */
 const IMPORT_GREY = '#bcbcbc';
 
+/** Drag data of a shape dragged from the Insérer ribbon onto the scene. */
+const PRIMITIVE_DRAG = 'application/x-3d-assembler-shape';
+
 export const UNITS = {
   micron: { label: 'Micron', short: 'µm', mm: 0.001 },
   mm: { label: 'Millimètre', short: 'mm', mm: 1 },
@@ -366,7 +369,13 @@ export class App {
           this.rb('Personnalisé', 'custom', () => this.customShapeDialog(), { title: 'Forme paramétrique aux dimensions voulues' }),
           sep(),
         );
-        for (const p of PRIMITIVES) items.push(this.rb(p.label, p.icon, () => this.addPrimitive(p.kind)));
+        // As 3D Builder: a click puts the shape in the middle of the scene, a drag drops it where wanted.
+        for (const p of PRIMITIVES) {
+          const b = this.rb(p.label, p.icon, () => this.addPrimitive(p.kind));
+          b.draggable = true;
+          b.addEventListener('dragstart', (e) => { e.dataTransfer?.setData(PRIMITIVE_DRAG, p.kind); if (e.dataTransfer) e.dataTransfer.effectAllowed = 'copy'; });
+          items.push(b);
+        }
         break;
       case 'object':
         items.push(
@@ -842,13 +851,15 @@ export class App {
 
   // --- commands: objects -------------------------------------------------------------------------------
 
-  addPrimitive(kind: PrimitiveKind): void {
+  /** Inserts a shape: in the middle of the scene, or at a point of the plate it was dropped on. */
+  addPrimitive(kind: PrimitiveKind, at?: [number, number]): void {
     this.doc.checkpoint();
     const label = PRIMITIVES.find((p) => p.kind === kind)!.label;
     const o = this.doc.addWorldMesh(makePrimitive(kind), { dropOnPlate: true, color: PRIMITIVE_COLORS[kind], name: `${currentLang() === 'en' ? toEnglish(label) : label}${this.doc.objects.length + 1}` });
     this.home.classList.add('hidden');
+    if (at) this.doc.update(o.id, { position: [at[0], at[1], o.position[2]] });
     this.doc.select([o.id]);
-    this.frameAll(); // 3D Builder frames the inserted shape
+    if (!at) this.frameAll(); // 3D Builder frames the inserted shape (a dropped one stays where it fell)
   }
 
   /**
@@ -1716,6 +1727,8 @@ img{max-width:100%;max-height:100%;object-fit:contain}
     this.viewEl.addEventListener('dragover', (e) => e.preventDefault());
     this.viewEl.addEventListener('drop', (e) => {
       e.preventDefault();
+      const kind = e.dataTransfer?.getData(PRIMITIVE_DRAG) as PrimitiveKind | undefined;
+      if (kind && PRIMITIVES.some((p) => p.kind === kind)) { this.addPrimitive(kind, this.view.platePoint(e) ?? undefined); return; }
       const files = [...(e.dataTransfer?.files ?? [])];
       if (files.length) void this.importFiles(files);
     });

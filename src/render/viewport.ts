@@ -690,7 +690,14 @@ export class Viewport {
     });
   }
 
-  private ndc(ev: PointerEvent): Vector2 {
+  /** Point of the build plate (z = 0) under a screen position, or null when looking away from it. */
+  platePoint(ev: { clientX: number; clientY: number }): [number, number] | null {
+    this.raycaster.setFromCamera(this.ndc(ev), this.camera);
+    const p = new Vector3();
+    return this.raycaster.ray.intersectPlane(new Plane(new Vector3(0, 0, 1), 0), p) ? [p.x, p.y] : null;
+  }
+
+  private ndc(ev: { clientX: number; clientY: number }): Vector2 {
     const r = this.renderer.domElement.getBoundingClientRect();
     return new Vector2(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
   }
