@@ -11,7 +11,7 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CameraControls, MAX_FOV, VIEW_PLATE, defaultPose, frameBox } from './camera-controls';
 import type { MeshData } from '../core/mesh-data';
 import { type SceneDocument, type SceneObject, type Vec3, isValid, objectBounds, objectMatrix } from '../core/model';
-import { detentAngle, snapAxis, snapCandidates } from '../geometry/align-snap';
+import { contactFraction, detentAngle, snapAxis, snapCandidates } from '../geometry/align-snap';
 import { type ObjectTexture, type TextureImage, hasTexture } from '../core/texture-data';
 
 Object3D.DEFAULT_UP.set(0, 0, 1);
@@ -86,7 +86,7 @@ export class Viewport {
   private overlay = new Group(); // previews from tool modes
   private hidden = new Set<number>();
   private raycaster = new Raycaster();
-  private drag: { ids: number[]; plane: Plane; start: Vector3; origins: Map<number, Vector3>; moved: boolean; box: Box3; snap: { cands: [number[], number[], number[]]; threshold: number } } | null = null;
+  private drag: { ids: number[]; plane: Plane; start: Vector3; origins: Map<number, Vector3>; moved: boolean; box: Box3; snap: { cands: [number[], number[], number[]]; threshold: number }; last: Vector3 } | null = null;
   private needsRender = true;
 
   constructor(private host: HTMLElement, private doc: SceneDocument) {
@@ -121,6 +121,7 @@ export class Viewport {
     this.gizmo.addEventListener('dragging-changed', (e) => {
       this.orbit.enabled = !e.value;
       this.gizmoSnap = null; // snap candidates are taken again at each drag start
+      this.gizmoLast = e.value ? this.gizmoProxy.position.clone() : null;
       if (e.value) this.onTransformStart();
       else this.commitGizmo();
     });
@@ -521,6 +522,17 @@ export class Viewport {
         }
       }
     }
+    // Collision (as 3D Builder) also holds the move arrows: the object stops in contact.
+    if (g.mode === 'translate' && this.gizmoLast) {
+      if (this.dragOptions.collision && !this.shiftHeld) {
+        const pp = this.gizmoProxy.position, last = this.gizmoLast;
+        const step = pp.clone().sub(last);
+        const lb = objectBounds({ ...sel, position: [last.x, last.y, last.z] });
+        const t = contactFraction([{ min: lb.min, max: lb.max }], this.otherBoxes([sel.id]), step.toArray());
+        pp.copy(last).addScaledVector(step, t);
+      }
+      this.gizmoLast.copy(this.gizmoProxy.position);
+    }
     this.gizmoProxy.updateMatrix();
     e.group.matrix.copy(this.gizmoProxy.matrix);
     e.group.matrixWorldNeedsUpdate = true;
@@ -699,7 +711,7 @@ export class Viewport {
     if (!this.raycaster.ray.intersectPlane(plane, start)) return;
     this.orbit.enabled = false;
     const box = objs.reduce((b, o) => b.union(this.boxOf(o, o.position)), new Box3());
-    this.drag = { ids, plane, start, origins: new Map(objs.map((o) => [o.id, new Vector3(...o.position)])), moved: false, box, snap: this.snapContext(ids) };
+    this.drag = { ids, plane, start, origins: new Map(objs.map((o) => [o.id, new Vector3(...o.position)])), moved: false, box, snap: this.snapContext(ids), last: new Vector3() };
   }
 
   /**
@@ -710,6 +722,8 @@ export class Viewport {
   dragOptions = { snap: true, collision: false };
   private shiftHeld = false;
   private gizmoSnap: { cands: [number[], number[], number[]]; threshold: number } | null = null;
+  /** Gizmo move: the proxy's last position allowed by collisions. */
+  private gizmoLast: Vector3 | null = null;
 
   /**
    * Snap candidates from the objects that do not move, and the threshold: about 1 % of the
@@ -739,8 +753,13 @@ export class Viewport {
       delta.x += snapAxis(d.box.min.x + delta.x, d.box.max.x + delta.x, d.snap.cands[0], d.snap.threshold);
       delta.y += snapAxis(d.box.min.y + delta.y, d.box.max.y + delta.y, d.snap.cands[1], d.snap.threshold);
     }
-    // Collisions: refuse a move that makes a dragged object's box enter another object's box.
-    if (this.dragOptions.collision && !ev.shiftKey && this.wouldCollide(d, delta)) return;
+    // Collision (as 3D Builder): the move stops where a dragged object's box touches another's.
+    if (this.dragOptions.collision && !ev.shiftKey) {
+      const step = delta.clone().sub(d.last);
+      const t = contactFraction(this.movedBoxes(d.ids, d.last), this.otherBoxes(d.ids), step.toArray());
+      delta.copy(d.last).addScaledVector(step, t);
+    }
+    d.last.copy(delta);
     for (const id of d.ids) {
       const e = this.entries.get(id);
       const o = d.origins.get(id);
@@ -760,18 +779,23 @@ export class Viewport {
     return new Box3(new Vector3(...b.min), new Vector3(...b.max));
   }
 
-  private wouldCollide(d: NonNullable<Viewport['drag']>, delta: Vector3): boolean {
-    const moving = new Set(d.ids);
-    const others = this.doc.objects.filter((o) => !moving.has(o.id)).map((o) => this.boxOf(o, o.position).expandByScalar(-0.01));
-    for (const id of d.ids) {
+  /** Boxes of the moved objects, displaced by delta from where the move started. */
+  private movedBoxes(ids: number[], delta: Vector3): { min: number[]; max: number[] }[] {
+    const d = this.drag;
+    return ids.flatMap((id) => {
       const obj = this.doc.get(id);
-      const o = d.origins.get(id);
-      if (!obj || !o) continue;
-      const box = this.boxOf(obj, [o.x + delta.x, o.y + delta.y, o.z]);
-      if (others.some((b) => b.intersectsBox(box))) return true;
-    }
-    return false;
+      const o = d?.origins.get(id) ?? (obj ? new Vector3(...obj.position) : null);
+      if (!obj || !o) return [];
+      const b = objectBounds({ ...obj, position: [o.x + delta.x, o.y + delta.y, o.z + delta.z] });
+      return [{ min: b.min, max: b.max }];
+    });
   }
+
+  private otherBoxes(ids: number[]): { min: number[]; max: number[] }[] {
+    const moving = new Set(ids);
+    return this.doc.objects.filter((o) => !moving.has(o.id)).map((o) => { const b = objectBounds(o); return { min: b.min, max: b.max }; });
+  }
+
 
   private endDrag(): void {
     const d = this.drag!;

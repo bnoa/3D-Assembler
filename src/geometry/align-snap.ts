@@ -40,3 +40,35 @@ export function detentAngle(a: number): number {
   const n = Math.round(a / ROTATION_DETENT) * ROTATION_DETENT;
   return Math.abs(a - n) < ROTATION_CATCH ? n : a;
 }
+
+/**
+ * Collision (3D Builder's setting): how far along a move v the moved boxes can go before entering
+ * another box, as a fraction of v (1 = the whole move). As in 3D Builder the test is on bounding
+ * boxes, the object stops in contact (boxes touching), it does not slide along the obstacle, and
+ * boxes that already overlap at the start do not hold it back (so overlapping objects can be pulled
+ * apart).
+ */
+export function contactFraction(moving: Box[], others: Box[], v: ArrayLike<number>, eps = 1e-6): number {
+  let t = 1;
+  for (const m of moving) {
+    for (const o of others) {
+      let enter = -Infinity, exit = Infinity;
+      let overlapNow = true;
+      for (let k = 0; k < 3; k++) {
+        if (!(m.max[k] > o.min[k] + eps && m.min[k] < o.max[k] - eps)) overlapNow = false;
+        const s = v[k];
+        if (Math.abs(s) < 1e-12) {
+          if (!(m.max[k] > o.min[k] + eps && m.min[k] < o.max[k] - eps)) { enter = Infinity; break; }
+          continue;
+        }
+        const a = ((s > 0 ? o.min[k] : o.max[k]) - (s > 0 ? m.max[k] : m.min[k])) / s;
+        const b = ((s > 0 ? o.max[k] : o.min[k]) - (s > 0 ? m.min[k] : m.max[k])) / s;
+        enter = Math.max(enter, a);
+        exit = Math.min(exit, b);
+      }
+      if (overlapNow || enter === Infinity) continue;
+      if (enter < exit - 1e-12 && enter < t && exit > 0) t = Math.max(0, enter);
+    }
+  }
+  return t;
+}

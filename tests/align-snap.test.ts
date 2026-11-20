@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { detentAngle, snapAxis, snapCandidates } from '../src/geometry/align-snap';
+import { contactFraction, detentAngle, snapAxis, snapCandidates } from '../src/geometry/align-snap';
 
 describe('Alignement (3D Builder CSnapTool)', () => {
   const cube = { min: [-20, -20, 0], max: [20, 20, 40] };
@@ -27,5 +27,24 @@ describe('Alignement (3D Builder CSnapTool)', () => {
     expect(detentAngle((47 * Math.PI) / 180)).toBeCloseTo(Math.PI / 4);
     expect(detentAngle((52 * Math.PI) / 180)).toBeCloseTo((52 * Math.PI) / 180);
     expect(detentAngle((-88 * Math.PI) / 180)).toBeCloseTo(-Math.PI / 2);
+  });
+});
+
+describe('Collision (as 3D Builder: boxes, stop in contact, no sliding)', () => {
+  const box = (x: number, y: number, s = 40) => ({ min: [x - s / 2, y - s / 2, 0], max: [x + s / 2, y + s / 2, s] });
+  it('stops a cube pushed into another exactly in contact (X = 40), however far the mouse goes', () => {
+    const t = contactFraction([box(43.48, 0)], [box(0, 0)], [-200, 0, 0]);
+    expect(43.48 - 200 * t).toBeCloseTo(40, 9);
+  });
+  it('tests boxes, not shapes: spheres offset by 26.6 in Y stop at X = 40', () => {
+    const t = contactFraction([box(54.77, -26.6)], [box(0, 0)], [-100, 0, 0]);
+    expect(54.77 - 100 * t).toBeCloseTo(40, 9);
+  });
+  it('does not slide along the obstacle: a diagonal move from contact does not move at all', () => {
+    expect(contactFraction([box(40, -26.6)], [box(0, 0)], [-30, 20, 0])).toBe(0);
+  });
+  it('lets objects that overlap at the start be pulled apart, and free moves go all the way', () => {
+    expect(contactFraction([box(10, 0)], [box(0, 0)], [50, 0, 0])).toBe(1);
+    expect(contactFraction([box(100, 0)], [box(0, 0)], [0, 50, 0])).toBe(1);
   });
 });
