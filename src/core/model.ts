@@ -20,20 +20,73 @@ export interface SceneObject {
   selfIntersections?: number;
   /** Painted colour per face (0xRRGGBB), aligned with mesh triangles; NO_PAINT = object colour. */
   faceColors?: Uint32Array;
-  /** Surface look (rendering and 3MF material name). */
-  material?: MaterialKind;
+  /** 3D Builder's material (Pinceau > Matériau); absent = Simple. */
+  material?: Material;
   /** Real textures (wallpaper, stickers, 3MF textures), aligned with mesh triangles. */
   texture?: ObjectTexture;
 }
 
-export type MaterialKind = 'simple' | 'gloss' | 'metal' | 'translucent' | 'rubber';
+/**
+ * 3D Builder's material types: Aucun(e) (no material: the object loses its colour), Simple (a
+ * colour), Réaliste (colour, Mat–Brillant, Métallique) and Translucide (colour, Mat–Brillant).
+ */
+export type MaterialKind = 'none' | 'simple' | 'realistic' | 'translucent';
+export interface Material {
+  kind: MaterialKind;
+  /** The Mat–Brillant slider, 0 to 1 (3MF roughness = 1 − gloss). */
+  gloss: number;
+  metallic: boolean;
+}
 export const MATERIALS: { id: MaterialKind; label: string }[] = [
+  { id: 'none', label: 'Aucun(e)' },
   { id: 'simple', label: 'Simple' },
-  { id: 'gloss', label: 'Plastique brillant' },
-  { id: 'metal', label: 'Métal' },
+  { id: 'realistic', label: 'Réaliste' },
   { id: 'translucent', label: 'Translucide' },
-  { id: 'rubber', label: 'Mat (caoutchouc)' },
 ];
+export const SIMPLE: Material = { kind: 'simple', gloss: 0.5, metallic: false };
+/** 3D Builder's Réaliste presets (colours and settings read from its 3MF files). */
+export const METAL_PRESETS: { name: string; color: string }[] = [
+  { name: 'Argent', color: '#f5f0f0' },
+  { name: 'Aluminium', color: '#b0a6a6' },
+  { name: 'Titane', color: '#85877e' },
+  { name: 'Cuivre', color: '#b36143' },
+  { name: 'Bronze', color: '#de9c29' },
+  { name: 'Or', color: '#dbb22c' },
+];
+/** The presets are metallic with roughness 0.25 (slider at 0.75). */
+export const METAL_PRESET_GLOSS = 0.75;
+
+/** A material from any stored form (older versions kept a name: gloss, metal, rubber). */
+export function materialOf(m: unknown): Material {
+  if (m && typeof m === 'object' && 'kind' in m) {
+    const x = m as Partial<Material>;
+    const kind = MATERIALS.some((k) => k.id === x.kind) ? x.kind! : 'simple';
+    return { kind, gloss: Number.isFinite(x.gloss) ? Math.max(0, Math.min(1, x.gloss!)) : 0.5, metallic: !!x.metallic };
+  }
+  switch (m) {
+    case 'gloss': return { kind: 'realistic', gloss: 0.8, metallic: false };
+    case 'metal': return { kind: 'realistic', gloss: METAL_PRESET_GLOSS, metallic: true };
+    case 'rubber': return { kind: 'realistic', gloss: 0.1, metallic: false };
+    case 'translucent': return { kind: 'translucent', gloss: 0.5, metallic: false };
+    default: return SIMPLE;
+  }
+}
+
+/**
+ * Translucide in 3MF, as 3D Builder writes it: the colour becomes an attenuation per channel,
+ * a = −ln(linear colour) × 24.052 (fitted on its files: grey #7F7F7F gives 37.2852), and the base
+ * colour is written white. The tint therefore deepens with the thickness crossed.
+ */
+export const TRANSLUCENT_K = 24.052;
+const toLinear = (c: number) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+const toSrgb = (c: number) => (c <= 0.0031308 ? c * 12.92 : 1.055 * c ** (1 / 2.4) - 0.055);
+export function translucentAttenuation(color: string): [number, number, number] {
+  const v = parseInt(color.slice(1, 7), 16);
+  return [16, 8, 0].map((sh) => -Math.log(Math.max(1 / 1024, toLinear(((v >> sh) & 255) / 255))) * TRANSLUCENT_K) as [number, number, number];
+}
+export function colorFromAttenuation(a: number[]): string {
+  return '#' + a.slice(0, 3).map((x) => Math.round(Math.max(0, Math.min(1, toSrgb(Math.exp(-Math.max(0, x) / TRANSLUCENT_K)))) * 255).toString(16).padStart(2, '0')).join('');
+}
 
 export const NO_PAINT = 0xffffffff;
 
@@ -197,7 +250,7 @@ export class SceneDocument {
    * Adds a mesh given in world coordinates. The object origin is placed at the mesh centre.
    * With `dropOnPlate`, the object is lifted so it rests on z = 0.
    */
-  addWorldMesh(world: MeshData, opts: { name?: string; color?: string; dropOnPlate?: boolean; faceColors?: Uint32Array; texture?: ObjectTexture } = {}): SceneObject {
+  addWorldMesh(world: MeshData, opts: { name?: string; color?: string; dropOnPlate?: boolean; faceColors?: Uint32Array; texture?: ObjectTexture; material?: Material } = {}): SceneObject {
     const { mesh, offset } = centered(world);
     const b = bounds(mesh);
     const position: Vec3 = opts.dropOnPlate ? [offset[0], offset[1], -b.min[2]] : offset;
@@ -213,6 +266,7 @@ export class SceneDocument {
       report: analyze(mesh),
       faceColors: opts.faceColors && opts.faceColors.length === mesh.indices.length / 3 ? opts.faceColors : undefined,
       texture: opts.texture && opts.texture.face.length === mesh.indices.length / 3 ? opts.texture : undefined,
+      material: opts.material && opts.material.kind !== 'simple' ? opts.material : undefined,
     };
     this.objects.push(obj);
     return obj;
@@ -223,7 +277,7 @@ export class SceneDocument {
    * rotation and scale as the object's transform. Falls back to a baked world mesh when the
    * transform is not a plain rotation and scale (shear, mirror).
    */
-  addTransformedMesh(local: MeshData, t: number[], opts: { name?: string; color?: string; faceColors?: Uint32Array; texture?: ObjectTexture } = {}): SceneObject {
+  addTransformedMesh(local: MeshData, t: number[], opts: { name?: string; color?: string; faceColors?: Uint32Array; texture?: ObjectTexture; material?: Material } = {}): SceneObject {
     const m = new Matrix4().set(t[0], t[3], t[6], t[9], t[1], t[4], t[7], t[10], t[2], t[5], t[8], t[11], 0, 0, 0, 1);
     const { mesh, offset } = centered(local);
     const full = m.clone().multiply(new Matrix4().makeTranslation(offset[0], offset[1], offset[2]));

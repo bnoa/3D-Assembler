@@ -2,15 +2,15 @@
 import {
   ACESFilmicToneMapping, AmbientLight, Box3, BufferAttribute, BufferGeometry, CanvasTexture, Color, DirectionalLight,
   DoubleSide, Fog, Group, HemisphereLight, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial,
-  MeshStandardMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Plane, PlaneGeometry, Raycaster,
+  MeshStandardMaterial, MeshPhysicalMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Plane, PlaneGeometry, Raycaster,
   RepeatWrapping, ClampToEdgeWrapping, DataTexture, LinearFilter, LinearMipmapLinearFilter, Scene, ShadowMaterial, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
   GridHelper, Quaternion, WireframeGeometry,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { CameraControls, MAX_FOV, VIEW_PLATE, defaultPose, frameBox } from './camera-controls';
-import type { MeshData } from '../core/mesh-data';
-import { type SceneDocument, type SceneObject, type Vec3, isValid, objectBounds, objectMatrix } from '../core/model';
+import { type MeshData, size } from '../core/mesh-data';
+import { type SceneDocument, type SceneObject, type Vec3, isValid, materialOf, objectBounds, objectMatrix, TRANSLUCENT_K } from '../core/model';
 import { contactFraction, detentAngle, snapAxis, snapCandidates } from '../geometry/align-snap';
 import { type ObjectTexture, type TextureImage, hasTexture } from '../core/texture-data';
 
@@ -51,13 +51,8 @@ function wireOf(geo: BufferGeometry): LineSegments<WireframeGeometry, LineBasicM
 const GHOST_COLOR = '#7fa6e6';
 const SELECT_COLOR = 0x8fd0ff;
 
-const MATERIAL_LOOK: Record<string, { roughness: number; metalness: number; opacity: number }> = {
-  simple: { roughness: 0.55, metalness: 0.05, opacity: 1 },
-  gloss: { roughness: 0.18, metalness: 0.05, opacity: 1 },
-  metal: { roughness: 0.3, metalness: 0.9, opacity: 1 },
-  translucent: { roughness: 0.15, metalness: 0, opacity: 0.55 },
-  rubber: { roughness: 0.95, metalness: 0, opacity: 1 },
-};
+/** Translucide: the distance over which light keeps the object's colour (see TRANSLUCENT_K), mm. */
+const TRANSLUCENT_DISTANCE = 1000 / TRANSLUCENT_K;
 const INVALID_COLOR = '#d9534f';
 
 export class Viewport {
@@ -313,7 +308,8 @@ export class Viewport {
 
   private createEntry(obj: SceneObject): Entry {
     const geo = toGeometry(obj.mesh, this.settings.smoothing, obj.faceColors, obj.color);
-    const mat = new MeshStandardMaterial({ color: obj.color, roughness: 0.55, metalness: 0.05, side: DoubleSide });
+    // Physical material: Translucide needs transmission and attenuation (the others leave them off).
+    const mat = new MeshPhysicalMaterial({ color: obj.color, roughness: 0.55, metalness: 0.05, side: DoubleSide });
     const mesh = new Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
@@ -348,15 +344,27 @@ export class Viewport {
     m.wireframe = false;
     if (s.wireframe && !e.wire) { e.wire = wireOf(e.mesh.geometry); e.mesh.add(e.wire); }
     if (e.wire) e.wire.visible = s.wireframe;
-    const look = MATERIAL_LOOK[e.obj.material ?? 'simple'];
-    m.roughness = look.roughness;
-    m.metalness = look.metalness;
-    const glassy = look.opacity < 1;
-    m.transparent = glassy;
-    m.opacity = look.opacity;
-    m.depthWrite = !glassy;
+    // 3D Builder's materials: Simple, Réaliste (Mat–Brillant, Métallique), Translucide (coloured
+    // glass whose tint deepens with the thickness crossed, as its 3MF attenuation describes).
+    const mat = materialOf(e.obj.material);
+    const pm = m as MeshPhysicalMaterial;
+    const glass = mat.kind === 'translucent' && s.colors && !invalid;
+    m.roughness = mat.kind === 'simple' || mat.kind === 'none' ? 0.55 : 1 - mat.gloss;
+    m.metalness = mat.kind === 'realistic' && mat.metallic ? 1 : mat.kind === 'realistic' || mat.kind === 'translucent' ? 0 : 0.05;
+    pm.transmission = glass ? 1 : 0;
+    pm.ior = 1;
+    pm.thickness = glass ? Math.min(...size(objectBounds(e.obj))) : 0;
+    pm.attenuationDistance = glass ? TRANSLUCENT_DISTANCE : Infinity;
+    pm.attenuationColor.set(glass ? e.obj.color : '#ffffff');
+    if (glass && !painted) m.color.set('#ffffff');
+    m.transparent = false;
+    m.opacity = 1;
+    m.depthWrite = true;
     m.flatShading = !s.smoothing;
-    m.envMapIntensity = s.reflections ? 1 : 0;
+    // Metals show their colour only through reflections: a brighter environment, as 3D Builder.
+    const metal = mat.kind === 'realistic' && mat.metallic && s.reflections;
+    m.envMap = metal ? this.scene.environment : null; // own, brighter environment (the scene's is dimmed)
+    m.envMapIntensity = metal ? 1.15 : s.reflections ? 1 : 0;
     m.needsUpdate = true;
     if (!s.shading) {
       m.emissive.set(m.color);
@@ -865,7 +873,7 @@ export class Viewport {
 
   private static thumbKey(obj: SceneObject): string {
     // The picture shows the object turned and scaled (framed on its scaled bounding sphere).
-    return `${obj.color}|${obj.material ?? ''}|${isValid(obj)}|${obj.scale.join()}|${obj.rotation.join()}`;
+    return `${obj.color}|${obj.material ? JSON.stringify(obj.material) : ''}|${isValid(obj)}|${obj.scale.join()}|${obj.rotation.join()}`;
   }
 
   private thumbHit(obj: SceneObject): string | null {

@@ -3,6 +3,7 @@ import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
 import type { MeshData } from '../core/mesh-data';
 import { type ObjectTexture, type TextureImage, compactTexture, emptyTexture } from '../core/texture-data';
 import { decodePNG, encodePNG } from './png';
+import { type Material, colorFromAttenuation, translucentAttenuation } from '../core/model';
 
 const NS_MAT = 'http://schemas.microsoft.com/3dmanufacturing/material/2015/02';
 
@@ -19,6 +20,8 @@ export interface ThreeMFObject {
   faceColors?: Uint32Array;
   /** Textured triangles (3MF texture2d / texture2dgroup). */
   texture?: ObjectTexture;
+  /** 3D Builder's material: Réaliste as pbmetallic, Translucide as translucent display properties. */
+  material?: Material;
   /**
    * Object transform as in the 3MF build item (row vectors: m00 m01 m02 m10 … m32, mm), for
    * writing: `mesh` is then in the object's own frame, as 3D Builder writes its files.
@@ -29,6 +32,7 @@ export interface ThreeMFObject {
 }
 
 const NO_PAINT = 0xffffffff;
+const clamp01 = (x: number) => (Number.isFinite(x) ? Math.max(0, Math.min(1, x)) : 0.5);
 const hexInt = (c: string) => parseInt(c.replace('#', '').slice(0, 6), 16);
 
 /** Size limits of a 3MF package: one part, and all the parts read together. */
@@ -60,6 +64,23 @@ export function read3MF(data: Uint8Array): ThreeMFObject[] {
   const colorGroups = new Map<string, string[]>();
   for (const el of all(model, 'basematerials')) {
     colorGroups.set(el.getAttribute('id')!, all(el, 'base').map((b) => normColor(b.getAttribute('displaycolor'))));
+  }
+  // Display properties of base materials, as 3D Builder writes them: pbmetallic (Réaliste) and
+  // translucent (Translucide, its colour in the attenuation, the base colour white).
+  const displays = new Map<string, { material: Material; color?: string }[]>();
+  for (const el of all(model, 'pbmetallicdisplayproperties')) {
+    displays.set(el.getAttribute('id')!, all(el, 'pbmetallic').map((p) => ({ material: { kind: 'realistic', gloss: 1 - clamp01(+(p.getAttribute('roughness') ?? 0.5)), metallic: +(p.getAttribute('metallicness') ?? 0) >= 0.5 } })));
+  }
+  for (const el of all(model, 'translucentdisplayproperties')) {
+    displays.set(el.getAttribute('id')!, all(el, 'translucent').map((p) => ({
+      material: { kind: 'translucent', gloss: 1 - clamp01(+(p.getAttribute('roughness') ?? 0.5)), metallic: false },
+      color: colorFromAttenuation((p.getAttribute('attenuation') ?? '0 0 0').trim().split(/\s+/).map(Number)),
+    })));
+  }
+  const materialGroups = new Map<string, ({ material: Material; color?: string } | undefined)[]>();
+  for (const el of all(model, 'basematerials')) {
+    const d = displays.get(el.getAttribute('displaypropertiesid') ?? '');
+    if (d) materialGroups.set(el.getAttribute('id')!, all(el, 'base').map((_, i) => d[i]));
   }
   for (const el of all(model, 'colorgroup')) {
     colorGroups.set(el.getAttribute('id')!, all(el, 'color').map((c) => normColor(c.getAttribute('color'))));
@@ -95,12 +116,14 @@ export function read3MF(data: Uint8Array): ThreeMFObject[] {
   }
 
   interface TriTex { img: TextureImage; uv: number[] }
-  interface Def { name: string; mesh?: MeshData; color?: string; triColors?: (string | undefined)[]; triTex?: (TriTex | undefined)[]; components: { id: string; m: number[] }[] }
+  interface Def { name: string; mesh?: MeshData; color?: string; material?: Material; triColors?: (string | undefined)[]; triTex?: (TriTex | undefined)[]; components: { id: string; m: number[] }[] }
   const defs = new Map<string, Def>();
   for (const obj of all(model, 'object')) {
     const def: Def = { name: obj.getAttribute('name') ?? '', components: [] };
     const pid = obj.getAttribute('pid');
     if (pid && colorGroups.has(pid)) def.color = colorGroups.get(pid)![+(obj.getAttribute('pindex') ?? 0)];
+    const look = pid ? materialGroups.get(pid)?.[+(obj.getAttribute('pindex') ?? 0)] : undefined;
+    if (look) { def.material = look.material; if (look.color) def.color = look.color; }
     const meshEl = first(obj, 'mesh');
     if (meshEl) {
       const verts = all(meshEl, 'vertex');
@@ -165,7 +188,11 @@ export function read3MF(data: Uint8Array): ThreeMFObject[] {
     if (!parts.length) continue;
     const def = defs.get(id)!;
     const mesh = concat(parts.map((p) => p.mesh));
-    const color = def.color ?? parts.flatMap((p) => p.colors).find(Boolean);
+    // 3D Builder writes item → object → component → mesh object: the material and colour sit on the mesh.
+    const inner = (d: Def | undefined, depth = 0): Def | undefined => (!d || depth > 16 ? undefined : d.material || d.mesh ? d : inner(defs.get(d.components[0]?.id ?? ''), depth + 1));
+    const meshDef = def.material ? def : inner(def);
+    const material = meshDef?.material;
+    const color = (material ? meshDef!.color : undefined) ?? def.color ?? parts.flatMap((p) => p.colors).find(Boolean);
     // Per-face colours only when some triangle differs from the object colour.
     const per = parts.flatMap((p) => Array.from({ length: p.mesh.indices.length / 3 }, (_, i) => p.colors[i]));
     const differs = per.some((c) => c && c !== color);
@@ -184,7 +211,7 @@ export function read3MF(data: Uint8Array): ThreeMFObject[] {
       });
       texture = compactTexture(tx);
     }
-    result.push({ name: def.name, mesh, color, faceColors, texture, local: keepT ? { mesh: local[0].mesh, transform: itemT } : undefined });
+    result.push({ name: def.name, mesh, color, faceColors, texture, material, local: keepT ? { mesh: local[0].mesh, transform: itemT } : undefined });
   }
   return result;
 }
@@ -232,6 +259,25 @@ export function write3MF(objects: ThreeMFObject[], _title = '', info?: Partial<T
       groups.set(i + ':' + k, { id: nextId++, texid, coords: [] });
     });
   });
+  // 3D Builder's materials: Réaliste in pbmetallic display properties, Translucide in translucent
+  // ones (colour as attenuation, base colour white); each kind with its own base materials.
+  const realistic = objects.filter((o) => o.material?.kind === 'realistic');
+  const translucent = objects.filter((o) => o.material?.kind === 'translucent');
+  const matRes: string[] = [];
+  const matRef = new Map<ThreeMFObject, string>();
+  const r4 = (n: number) => String(Math.round(n * 1e4) / 1e4);
+  if (realistic.length) {
+    const dp = nextId++, bm = nextId++;
+    matRes.push(`<m:pbmetallicdisplayproperties id="${dp}">${realistic.map((o) => `<m:pbmetallic name="Metallic" metallicness="${o.material!.metallic ? 1 : 0}" roughness="${r4(1 - o.material!.gloss)}"/>`).join('')}</m:pbmetallicdisplayproperties>`,
+      `<basematerials id="${bm}" displaypropertiesid="${dp}">${realistic.map((o) => `<base name="Metallic" displaycolor="${(o.color ?? '#9aa3ad').toUpperCase()}FF"/>`).join('')}</basematerials>`);
+    realistic.forEach((o, k) => matRef.set(o, ` pid="${bm}" pindex="${k}"`));
+  }
+  if (translucent.length) {
+    const dp = nextId++, bm = nextId++;
+    matRes.push(`<m:translucentdisplayproperties id="${dp}">${translucent.map((o) => `<m:translucent name="Translucent" attenuation="${translucentAttenuation(o.color ?? '#9aa3ad').map(r4).join(' ')}" refractiveindex="1 1 1" roughness="${r4(1 - o.material!.gloss)}"/>`).join('')}</m:translucentdisplayproperties>`,
+      `<basematerials id="${bm}" displaypropertiesid="${dp}">${translucent.map(() => '<base name="Translucent" displaycolor="#FFFFFFFF"/>').join('')}</basematerials>`);
+    translucent.forEach((o, k) => matRef.set(o, ` pid="${bm}" pindex="${k}"`));
+  }
   objects.forEach((o, i) => {
     const id = i + 2;
     const p = o.mesh.positions, t = o.mesh.indices;
@@ -254,13 +300,15 @@ export function write3MF(objects: ThreeMFObject[], _title = '', info?: Partial<T
       tr.push(`<triangle v1="${t[k]}" v2="${t[k + 1]}" v3="${t[k + 2]}"${paint}/>`);
     }
     const pindex = colors.indexOf((o.color ?? '#9aa3ad').toLowerCase());
-    res += `<object id="${id}" type="model" name="${escapeXml(o.name)}" pid="1" pindex="${pindex}"><mesh><vertices>${v.join('')}</vertices><triangles>${tr.join('')}</triangles></mesh></object>`;
+    // Aucun(e): no material at all, as 3D Builder writes it.
+    const ref = matRef.get(o) ?? (o.material?.kind === 'none' ? '' : ` pid="1" pindex="${pindex}"`);
+    res += `<object id="${id}" type="model" name="${escapeXml(o.name)}"${ref}><mesh><vertices>${v.join('')}</vertices><triangles>${tr.join('')}</triangles></mesh></object>`;
     build += o.transform ? `<item objectid="${id}" transform="${o.transform.map(fmt).join(' ')}"/>` : `<item objectid="${id}"/>`;
   });
   for (const g of groups.values()) texRes.push(`<m:texture2dgroup id="${g.id}" texid="${g.texid}">${g.coords.join('')}</m:texture2dgroup>`);
   // Texture resources are declared before the objects that use them.
-  res = res.replace('</basematerials>', `</basematerials>${texRes.join('')}`);
-  const textured = texRes.length > 0;
+  res = res.replace('</basematerials>', `</basematerials>${texRes.join('')}${matRes.join('')}`);
+  const textured = texRes.length > 0 || matRes.length > 0;
   const model = `<?xml version="1.0" encoding="UTF-8"?>
 <model unit="millimeter" xml:lang="fr-FR" xmlns="${NS}"${textured ? ` xmlns:m="${NS_MAT}"` : ''}>
 ${INFO_KEYS.map(([k, n]) => {
@@ -274,7 +322,7 @@ ${INFO_KEYS.map(([k, n]) => {
   const modelRels = Object.keys(pngs).map((path, i) => `<Relationship Target="/${path}" Id="tex${i}" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dtexture"/>`).join('');
   return zipSync({
     ...pngs,
-    ...(textured ? { '3D/_rels/3dmodel.model.rels': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
+    ...(Object.keys(pngs).length ? { '3D/_rels/3dmodel.model.rels': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${modelRels}</Relationships>`) } : {}),
     '[Content_Types].xml': strToU8(`<?xml version="1.0" encoding="UTF-8"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="image/png"/><Default Extension="jpg" ContentType="image/jpeg"/></Types>`),

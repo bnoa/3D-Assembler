@@ -1,6 +1,6 @@
 // Application shell: ribbon, side panel, transform bar, menu, notifications and commands.
 import { Matrix4, Vector3 } from 'three';
-import { NO_PAINT, SceneDocument, type SceneObject, type Vec3, isValid, approxBounds, movedTransform, objectBounds, objectMatrix, worldBounds, worldMesh } from '../core/model';
+import { type Material, NO_PAINT, SceneDocument, type SceneObject, materialOf, type Vec3, isValid, approxBounds, movedTransform, objectBounds, objectMatrix, worldBounds, worldMesh } from '../core/model';
 import { type MeshData, bounds, merged, size, surfaceArea, transformed } from '../core/mesh-data';
 import { Viewport, type GizmoMode, type ViewSettings } from '../render/viewport';
 import { PRIMITIVES, PRIMITIVE_COLORS, makePrimitive, type PrimitiveKind } from '../geometry/primitives';
@@ -128,7 +128,7 @@ export class App {
   private lockScale = false; // 3D Builder: proportions unlocked by default
   private scalePercent = false; // scale values in % of the original size instead of the unit
   private sideCollapsed = false;
-  private clipboard: { mesh: MeshData; color: string; name: string; faceColors?: Uint32Array; texture?: ObjectTexture }[] = [];
+  private clipboard: { mesh: MeshData; color: string; name: string; faceColors?: Uint32Array; texture?: ObjectTexture; material?: Material }[] = [];
 
   private top = h('div');
   private ribbon = h('div', { class: 'ribbon' });
@@ -285,7 +285,7 @@ export class App {
           const faces = o.indices.length / 3;
           this.doc.addObject({
             name: o.name, color: o.color, mesh: { positions: o.positions, indices: o.indices },
-            position: o.position, rotation: o.rotation, scale: o.scale, material: o.material,
+            position: o.position, rotation: o.rotation, scale: o.scale, material: o.material ? materialOf(o.material) : undefined,
             selfIntersections: o.selfIntersections,
             faceColors: o.faceColors?.length === faces ? o.faceColors : undefined,
             texture: o.texture?.face.length === faces ? o.texture : undefined,
@@ -296,7 +296,7 @@ export class App {
         const file = new File([r.data], `${name}.3mf`);
         try { Object.assign(this.doc.info, read3MFInfo(new Uint8Array(await file.arrayBuffer()))); } catch { /* no metadata */ }
         for (const item of await importFile(file)) {
-          const opts = { name: item.name, color: item.color ?? IMPORT_GREY, faceColors: item.faceColors, texture: item.texture }; // no colour in the file: 3D Builder's grey
+          const opts = { name: item.name, color: item.color ?? IMPORT_GREY, faceColors: item.faceColors, texture: item.texture, material: item.material }; // no colour in the file: 3D Builder's grey
           if (item.local) this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts);
           else this.doc.addWorldMesh(item.mesh, opts);
         }
@@ -310,7 +310,7 @@ export class App {
 
   /** Scene objects as saved in a 3MF (each mesh in its own frame, its transform in the build item). */
   private sceneItems(objs: SceneObject[]) {
-    return objs.map((o) => ({ name: o.name, mesh: worldMesh(o), color: o.color, faceColors: o.faceColors, texture: o.texture, local: { mesh: o.mesh, transform: rowTransform(o) } }));
+    return objs.map((o) => ({ name: o.name, mesh: worldMesh(o), color: o.color, faceColors: o.faceColors, texture: o.texture, material: o.material, local: { mesh: o.mesh, transform: rowTransform(o) } }));
   }
 
   // --- rendering ---------------------------------------------------------------------------------
@@ -693,7 +693,7 @@ export class App {
       for (const [k, m] of results[i].entries()) {
         if (!m.indices.length) continue;
         const faceColors = opts.faceColors ? opts.faceColors[i]?.[k] : inheritColors(o, m);
-        const added = this.doc.addWorldMesh(m, { name: k ? `${o.name} (${k + 1})` : o.name, color: o.color, dropOnPlate: opts.dropOnPlate, faceColors, texture: inheritTexture(o, m) });
+        const added = this.doc.addWorldMesh(m, { name: k ? `${o.name} (${k + 1})` : o.name, color: o.color, dropOnPlate: opts.dropOnPlate, faceColors, texture: inheritTexture(o, m), material: o.material });
         ids.push(added.id);
       }
     });
@@ -913,7 +913,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
     if (!sel.length) return;
     this.doc.checkpoint();
     const anchor = worldBounds(sel);
-    const ids = sel.map((o) => this.doc.addWorldMesh(worldMesh(o), { name: `${o.name} copie`, color: o.color, faceColors: o.faceColors, texture: o.texture }).id);
+    const ids = sel.map((o) => this.doc.addWorldMesh(worldMesh(o), { name: `${o.name} copie`, color: o.color, faceColors: o.faceColors, texture: o.texture, material: o.material }).id);
     this.placeLeftOf(ids, anchor.min[0]);
     this.doc.select(ids);
   }
@@ -926,7 +926,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
   }
 
   copy(): void {
-    this.clipboard = this.doc.selected.map((o) => ({ mesh: worldMesh(o), color: o.color, name: o.name, faceColors: o.faceColors, texture: o.texture }));
+    this.clipboard = this.doc.selected.map((o) => ({ mesh: worldMesh(o), color: o.color, name: o.name, faceColors: o.faceColors, texture: o.texture, material: o.material }));
     this.toast('Objet copié dans le Presse-papiers.');
     this.refresh();
   }
@@ -941,7 +941,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
     if (!this.clipboard.length) return;
     const sel = this.doc.selected;
     this.doc.checkpoint();
-    const ids = this.clipboard.map((c) => this.doc.addWorldMesh(c.mesh, { name: c.name, color: c.color, faceColors: c.faceColors, texture: c.texture }).id);
+    const ids = this.clipboard.map((c) => this.doc.addWorldMesh(c.mesh, { name: c.name, color: c.color, faceColors: c.faceColors, texture: c.texture, material: c.material }).id);
     const anchor = sel.length ? worldBounds(sel) : worldBounds(ids.map((id) => this.doc.get(id)!));
     this.placeLeftOf(ids, anchor.min[0]);
     this.doc.select(ids);
@@ -1017,7 +1017,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
         }
         texture = { ...texture, uv };
       }
-      const added = this.doc.addWorldMesh({ positions: moved.positions, indices: idx }, { name: o.name, color: o.color, faceColors: o.faceColors, texture });
+      const added = this.doc.addWorldMesh({ positions: moved.positions, indices: idx }, { name: o.name, color: o.color, faceColors: o.faceColors, texture, material: o.material });
       this.doc.remove([o.id]);
       this.doc.selection.add(added.id);
     }
@@ -1030,7 +1030,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
     if (sel.length < 2) return;
     this.doc.checkpoint();
     // Each part keeps its colour, as in 3D Builder.
-    const g = this.doc.addWorldMesh(merged(sel.map(worldMesh)), { name: 'Groupe', color: sel[0].color, faceColors: partColors(sel), texture: partTextures(sel) });
+    const g = this.doc.addWorldMesh(merged(sel.map(worldMesh)), { name: 'Groupe', color: sel[0].color, faceColors: partColors(sel), texture: partTextures(sel), material: sel[0].material });
     this.doc.remove(sel.map((o) => o.id));
     this.doc.select([g.id]);
   }
@@ -1088,7 +1088,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
         const parts = list.filter((m): m is MeshData => !!m);
         const result = parts.length === 1 ? parts[0] : merged(parts);
         this.doc.checkpoint();
-        const o = this.doc.addWorldMesh(result, { name: parts.length === 1 ? sel[0].name : 'Groupe', color: sel[0].color, faceColors: colorsOf(sel, result), texture: textureOf(sel, result) });
+        const o = this.doc.addWorldMesh(result, { name: parts.length === 1 ? sel[0].name : 'Groupe', color: sel[0].color, faceColors: colorsOf(sel, result), texture: textureOf(sel, result), material: sel[0].material });
         this.doc.remove(sel.map((x) => x.id));
         this.doc.select([o.id]);
         return;
@@ -1098,7 +1098,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
         this.doc.checkpoint();
         this.doc.remove(sel.map((x) => x.id));
         if (result.indices.length < 3) { this.toast('Les deux objets n’ont aucune partie commune.', 'warn'); return; }
-        const ids = splitShells(result).map((p) => this.doc.addWorldMesh(p, { name: sel[0].name, color: sel[0].color, faceColors: colorsOf(sel, p), texture: textureOf(sel, p) }).id);
+        const ids = splitShells(result).map((p) => this.doc.addWorldMesh(p, { name: sel[0].name, color: sel[0].color, faceColors: colorsOf(sel, p), texture: textureOf(sel, p), material: sel[0].material }).id);
         this.doc.select(ids);
         return;
       }
@@ -1119,7 +1119,7 @@ img{max-width:100%;max-height:100%;object-fit:contain}
       this.doc.checkpoint();
       const ids: number[] = [];
       targets.forEach((t, i) => {
-        for (const p of results[i]) ids.push(this.doc.addWorldMesh(p, { name: t.name, color: t.color, faceColors: colorsOf([t, tool], p), texture: textureOf([t, tool], p) }).id);
+        for (const p of results[i]) ids.push(this.doc.addWorldMesh(p, { name: t.name, color: t.color, faceColors: colorsOf([t, tool], p), texture: textureOf([t, tool], p), material: t.material }).id);
       });
       this.doc.remove([tool.id, ...targets.map((t) => t.id)]);
       this.doc.select(ids);

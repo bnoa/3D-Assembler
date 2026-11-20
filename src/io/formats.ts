@@ -10,6 +10,7 @@ import { type MeshData, fromTriangleSoup, merged } from '../core/mesh-data';
 import { read3MF, write3MF, type ThreeMFInfo } from './threemf';
 import { LoadingManager } from 'three';
 import { MAX_PIXELS, MAX_SIDE } from './png';
+import type { Material } from '../core/model';
 
 /**
  * Loader manager that keeps a model to what it contains: links to outside files or addresses
@@ -53,6 +54,7 @@ export interface ImportedObject {
   color?: string;
   faceColors?: Uint32Array;
   texture?: ObjectTexture;
+  material?: Material;
   /** 3MF: mesh in the object's frame and its build transform (row vectors), kept as the object's transform. */
   local?: { mesh: MeshData; transform: number[] };
 }
@@ -271,6 +273,8 @@ export interface ExportItem {
   color: string;
   faceColors?: Uint32Array;
   texture?: ObjectTexture;
+  /** 3MF only: 3D Builder's material (Réaliste, Translucide…). */
+  material?: Material;
 }
 
 export async function exportScene(items: ExportItem[], format: ExportFormat, title: string, info?: Partial<ThreeMFInfo>, thumbnail?: Uint8Array): Promise<Blob> {

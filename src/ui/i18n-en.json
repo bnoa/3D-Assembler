@@ -1,6 +1,5 @@
 {
   "Simple": "Simple",
-  "Métal": "Metal",
   "Nouvelle scène": "New scene",
   "Objet non valide ({0}). Réparez-le avant cette opération.": "Invalid object ({0}). Repair it before this operation.",
   "Latitude": "Latitude",
@@ -252,7 +251,6 @@
   "Couverture": "Coverage",
   "Sélectionné": "Selected",
   "Sticker": "Sticker",
-  "Le matériau et la couleur s’appliquent à tout l’objet. Choisissez le type, puis la couleur.": "Material and color apply to the whole object. Choose the type, then the color.",
   "Type": "Type",
   "Cliquez sur un objet pour reprendre son matériau.": "Click an object to pick up its material.",
   "Cliquez sur un objet pour reprendre sa couleur.": "Click an object to pick up its color.",
@@ -311,5 +309,22 @@
   "po": "in",
   "pi": "ft",
   "Licences des logiciels tiers": "Third-party licenses",
-  "3D Assembler {0} : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.": "3D Assembler {0}: a free tool for preparing 3D models before printing, inspired by Microsoft 3D Builder and designed to replace it. The project of a 3D printing enthusiast saddened by the discontinuation of that software."
+  "3D Assembler {0} : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.": "3D Assembler {0}: a free tool for preparing 3D models before printing, inspired by Microsoft 3D Builder and designed to replace it. The project of a 3D printing enthusiast saddened by the discontinuation of that software.",
+  "Aucun(e)": "None",
+  "Réaliste": "Realistic",
+  "Translucide": "Translucent",
+  "Métallique": "Metallic",
+  "Mat": "Matte",
+  "Brillant": "Glossy",
+  "Mat – Brillant": "Matte – Glossy",
+  "Argent": "Silver",
+  "Aluminium": "Aluminum",
+  "Titane": "Titanium",
+  "Cuivre": "Copper",
+  "Bronze": "Bronze",
+  "Or": "Gold",
+  "Supprime tous les matériaux de l’objet.": "Removes all materials from the object.",
+  "Change le matériau de la totalité de l’objet en matériau de couleur spécifique. Cliquez sur Couleur pour choisir la couleur.": "Changes the material of the whole object to a specific colour material. Click Color to choose the colour.",
+  "Change le matériau de la totalité de l’objet en matériau réaliste. Vous pouvez modifier la couleur ou le niveau de réflectivité de l’objet.": "Changes the material of the whole object to a realistic material. You can change the colour or the reflectivity of the object.",
+  "Change le matériau de la totalité de l’objet en matériau translucide. Vous pouvez choisir la couleur, ainsi que le niveau de réflectivité ou de translucidité de l’objet. Remarque : si l’objet est agrandi, la couleur affichée devient plus intense, si l’objet est réduit, la couleur affichée devient plus translucide.": "Changes the material of the whole object to a translucent material. You can choose the colour and the level of reflectivity or translucency of the object. Note: if the object is enlarged, the colour shown becomes more intense; if it is reduced, the colour shown becomes more translucent."
 }

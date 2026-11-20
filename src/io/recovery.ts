@@ -3,7 +3,7 @@
 // longer open (its Web Lock is not held) is offered: Continuer reloads it, Ignorer throws it away.
 // 3D Builder writes a 3MF; here the copy is the scene's own arrays (stored by structured clone,
 // no XML nor zip on the main thread). Copies written by older versions hold a 3MF blob (data).
-import type { MaterialKind, ModelInfo, Vec3 } from '../core/model';
+import type { Material, ModelInfo, Vec3 } from '../core/model';
 import type { ObjectTexture } from '../core/texture-data';
 
 /** One object as the scene holds it: mesh in its own frame and its transform. */
@@ -16,7 +16,8 @@ export interface RecoveryObject {
   rotation: Vec3;
   scale: Vec3;
   faceColors?: Uint32Array;
-  material?: MaterialKind;
+  /** A Material (older copies: its name). */
+  material?: Material | string;
   texture?: ObjectTexture;
   selfIntersections?: number;
 }

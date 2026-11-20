@@ -1,7 +1,7 @@
 // Tool modes: the blue bar with Annuler / OK plus the tool's own controls, and a live preview.
 import { BufferGeometry, DoubleSide, Float32BufferAttribute, Matrix4, Mesh, MeshBasicMaterial, Object3D, Vector3 } from 'three';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
-import { MATERIALS, type MaterialKind, NO_PAINT, type SceneObject, isValid, movedTransform, objectMatrix, worldMesh } from '../core/model';
+import { MATERIALS, METAL_PRESETS, METAL_PRESET_GLOSS, type Material, type MaterialKind, NO_PAINT, materialOf, type SceneObject, isValid, movedTransform, objectMatrix, worldMesh } from '../core/model';
 import { type MeshData, bounds, merged, transformed, triCount } from '../core/mesh-data';
 import { hexToInt, intToHex, paintRegion } from '../geometry/paint';
 import { SIMPLIFY_MAX_PASSES, simplifyPasses } from '../geometry/simplify-passes';
@@ -109,6 +109,16 @@ function smoothPasses(ctx: ModeContext, edges: boolean): number {
   while (n < level && faces * 4 <= 4e6) { faces *= 4; n++; }
   return level > 0 ? Math.max(1, n) : 0;
 }
+
+/** 3D Builder's help for each material type (shown at the bottom right). */
+const MATERIAL_TIPS: Record<MaterialKind, string> = {
+  none: 'Supprime tous les matériaux de l’objet.',
+  simple: 'Change le matériau de la totalité de l’objet en matériau de couleur spécifique. Cliquez sur Couleur pour choisir la couleur.',
+  realistic: 'Change le matériau de la totalité de l’objet en matériau réaliste. Vous pouvez modifier la couleur ou le niveau de réflectivité de l’objet.',
+  translucent: 'Change le matériau de la totalité de l’objet en matériau translucide. Vous pouvez choisir la couleur, ainsi que le niveau de réflectivité ou de translucidité de l’objet. Remarque : si l’objet est agrandi, la couleur affichée devient plus intense, si l’objet est réduit, la couleur affichée devient plus translucide.',
+};
+/** Aucun(e): the object loses its colour (3D Builder's grey for objects without one). */
+const NO_MATERIAL_GREY = '#bcbcbc';
 
 /** Part(s) kept by Fractionner, remembered from one use to the next as in 3D Builder. */
 let splitKeep = 'top';
@@ -1775,33 +1785,52 @@ export const MODES: Record<string, ModeSpec> = {
 
   material: {
     okLabel: 'Appliquer',
-    tip: 'Le matériau et la couleur s’appliquent à tout l’objet. Choisissez le type, puis la couleur.',
+    tip: MATERIAL_TIPS.simple,
     build(ctx) {
+      // As 3D Builder's Matériau: Type (Aucun(e), Simple, Réaliste, Translucide), Couleur, the
+      // Mat–Brillant slider (Réaliste, Translucide), Métallique and six metal presets (Réaliste),
+      // Sélectionner les matériaux (eyedropper). The whole object takes the material.
       const first = ctx.selection[0];
-      const s = { material: (first.material ?? 'simple') as MaterialKind, color: first.color };
-      const past: { material: MaterialKind; color: string }[] = [], future: typeof past = [];
-      let prev = { ...s };
+      type S = { mat: Material; color: string };
+      const s: S = { mat: materialOf(first.material), color: first.color };
+      const copy = (x: S): S => ({ mat: { ...x.mat }, color: x.color });
+      const same = (x: S, y: S) => x.color === y.color && x.mat.kind === y.mat.kind && x.mat.gloss === y.mat.gloss && x.mat.metallic === y.mat.metallic;
+      const past: S[] = [], future: S[] = [];
+      let prev = copy(s);
+      const original = ctx.selection.map((o) => ({ id: o.id, material: o.material, color: o.color }));
       const preview = (record = true) => {
-        if (record && (prev.material !== s.material || prev.color !== s.color)) { past.push(prev); future.length = 0; prev = { ...s }; }
-        // Live: temporarily restyle the selected objects (restored on cancel).
-        for (const o of ctx.selection) ctx.app.doc.update(o.id, { material: s.material, color: s.color });
+        if (record && !same(prev, s)) { past.push(prev); future.length = 0; prev = copy(s); }
+        // Live: the selected objects are restyled (restored on Annuler).
+        const material = s.mat.kind === 'simple' ? undefined : { ...s.mat };
+        for (const o of ctx.selection) ctx.app.doc.update(o.id, { material, color: s.color });
         ctx.app.doc.emit();
+        sync();
       };
-      // Annuler / Refaire of the bar, as 3D Builder.
-      const back = (from: typeof past, to: typeof past) => {
+      const back = (from: S[], to: S[]) => {
         const p = from.pop();
         if (!p) return;
-        to.push({ ...s });
-        Object.assign(s, p);
-        prev = { ...s };
-        typeSel.value = s.material;
+        to.push(copy(s));
+        Object.assign(s, copy(p));
+        prev = copy(s);
         picker.setColor?.(s.color);
         preview(false);
       };
       ctx.history = { undo: () => back(past, future), redo: () => back(future, past) };
-      const original = ctx.selection.map((o) => ({ id: o.id, material: o.material, color: o.color }));
-      const typeSel = h('select', { 'aria-label': 'Type' }, ...MATERIALS.map((x) => h('option', { value: x.id, selected: x.id === s.material }, x.label)));
-      typeSel.addEventListener('change', () => { s.material = typeSel.value as MaterialKind; preview(); });
+      const typeSel = h('select', { 'aria-label': 'Type' }, ...MATERIALS.map((x) => h('option', { value: x.id }, x.label))) as HTMLSelectElement;
+      typeSel.addEventListener('change', () => {
+        const kind = typeSel.value as MaterialKind;
+        // 3D Builder: a new Réaliste or Translucide starts with the slider in the middle, not
+        // metallic; Aucun(e) removes the material and the colour.
+        s.mat = { kind, gloss: 0.5, metallic: false };
+        if (kind === 'none') s.color = NO_MATERIAL_GREY;
+        picker.setColor?.(s.color);
+        preview();
+      });
+      const glossIn = h('input', { type: 'range', min: '0', max: '1', step: '0.01', 'aria-label': 'Mat – Brillant' }) as HTMLInputElement;
+      glossIn.addEventListener('input', () => { s.mat.gloss = +glossIn.value; preview(false); });
+      glossIn.addEventListener('change', () => preview());
+      const metalIn = h('input', { type: 'checkbox', 'aria-label': 'Métallique' }) as HTMLInputElement;
+      metalIn.addEventListener('change', () => { s.mat.metallic = metalIn.checked; preview(); });
       // Eyedropper: the next click on an object takes its material and colour (or only the colour).
       const eyedrop = (withMaterial: boolean) => {
         ctx.app.toast(withMaterial ? 'Cliquez sur un objet pour reprendre son matériau.' : 'Cliquez sur un objet pour reprendre sa couleur.');
@@ -1809,15 +1838,38 @@ export const MODES: Record<string, ModeSpec> = {
           ctx.app.view.paintPick = null;
           const o = ctx.app.doc.get(id);
           if (!o) return;
-          if (withMaterial) { s.material = o.material ?? 'simple'; typeSel.value = s.material; }
+          if (withMaterial) s.mat = materialOf(o.material);
           s.color = faceColorOf(o, face);
           picker.setColor?.(s.color);
           preview();
         };
       };
       const picker = colorPicker('Couleur', () => s.color, (c) => { s.color = c; preview(); }, () => eyedrop(false)) as HTMLElement & { setColor?: (c: string) => void };
-      ctx.bar.append(h('label', {}, 'Type', typeSel), h('label', {}, 'Couleur', picker),
-        h('button', { class: 'act', html: `${icon('eyedropper', 22)}<span>Sélectionner les matériaux</span>`, onclick: () => eyedrop(true) }));
+      const colorGroup = h('label', {}, 'Couleur', picker);
+      const glossGroup = h('label', { class: 'gloss' }, h('span', {}, 'Mat'), glossIn, h('span', {}, 'Brillant'));
+      const metalGroup = h('label', {}, metalIn, h('span', {}, 'Métallique'));
+      const presets = h('div', { class: 'presets', style: 'display:flex;gap:6px;flex-basis:100%;padding:2px 0 4px' },
+        ...METAL_PRESETS.map((p) => h('button', {
+          title: p.name, 'aria-label': p.name,
+          style: 'width:30px;height:30px;border:1px solid rgba(255,255,255,.35);border-radius:3px;background:radial-gradient(circle at 35% 30%, #fff 0, ' + p.color + ' 45%, #222 120%)',
+          onclick: () => { s.color = p.color; s.mat = { kind: 'realistic', gloss: METAL_PRESET_GLOSS, metallic: true }; picker.setColor?.(s.color); preview(); },
+        })));
+      const sync = () => {
+        const k = s.mat.kind;
+        typeSel.value = k;
+        glossIn.value = String(s.mat.gloss);
+        metalIn.checked = s.mat.metallic;
+        colorGroup.style.display = k === 'none' ? 'none' : '';
+        glossGroup.style.display = k === 'realistic' || k === 'translucent' ? '' : 'none';
+        metalGroup.style.display = k === 'realistic' ? '' : 'none';
+        presets.style.display = k === 'realistic' ? 'flex' : 'none';
+        const tip = document.querySelector('.mode-tip span:last-child');
+        if (tip) tip.textContent = currentLang() === 'en' ? toEnglish(MATERIAL_TIPS[k]) : MATERIAL_TIPS[k];
+      };
+      ctx.bar.append(h('label', {}, 'Type', typeSel), colorGroup, glossGroup, metalGroup,
+        h('button', { class: 'act', html: icon('eyedropper', 22) + '<span>Sélectionner les matériaux</span>', onclick: () => eyedrop(true) }), presets);
+      sync();
+      setTimeout(sync); // the tip is added once the bar is built
       return () => {
         ctx.app.view.paintPick = null;
         if (st(ctx, 'applied', false)) return;
@@ -1836,7 +1888,6 @@ export const MODES: Record<string, ModeSpec> = {
       return true;
     },
   },
-
   color: {
     okLabel: 'Couleur',
     history: true,
