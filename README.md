@@ -84,8 +84,9 @@ You can also [use 3D Assembler in your browser](https://bnoa.github.io/3D-Assemb
 
 ## Getting help
 
-- **Something does not work, or a file is not repaired correctly?** [Open an issue](../../issues) and, if you can, attach the file.
-- **An idea or a question?** Open an issue too, with "Question" or "Idea" in its title.
+- **Coming from 3D Builder?** See [Moving from 3D Builder to 3D Assembler](docs/from-3d-builder.md).
+- **Something does not work, or a file is not repaired correctly?** [Report a bug](../../issues/new/choose) and, if you can, attach the file.
+- **An idea or a question?** [Open an issue](../../issues/new/choose) too.
 
 ## Contributing
 
@@ -125,6 +126,7 @@ The comparison tests with 3D Builder are optional. They read, when present, the 
 
 ## Documentation
 
+- [Moving from 3D Builder to 3D Assembler](docs/from-3d-builder.md)
 - [3D Builder's tools and how 3D Assembler reproduces them](docs/3d-builder-tools.md)
 - [How the repair works](docs/repair-engine.md)
 - [Inventory of 3D Builder's features](docs/3d-builder-inventory.md)

@@ -1,0 +1,38 @@
+name: Bug report
+description: Something does not work, or works differently from 3D Builder.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: builder
+    attributes:
+      label: What does 3D Builder do?
+      description: If you know it, how 3D Builder behaves in the same situation.
+  - type: dropdown
+    id: version
+    attributes:
+      label: Which version of 3D Assembler?
+      options:
+        - Windows app
+        - macOS app
+        - Linux app
+        - Web version (browser)
+    validations:
+      required: true
+  - type: input
+    id: number
+    attributes:
+      label: Version number
+      description: Shown in Settings, under the app name.
+      placeholder: "0.2.2"
+  - type: textarea
+    id: files
+    attributes:
+      label: Files or screenshots
+      description: A model that shows the problem (3MF, STL…) helps a lot. Only share files you are allowed to share.

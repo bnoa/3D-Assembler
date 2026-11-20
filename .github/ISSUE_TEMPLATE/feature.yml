@@ -1,0 +1,15 @@
+name: Feature request
+description: Something from 3D Builder that is missing, or an idea.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What would you like?
+    validations:
+      required: true
+  - type: textarea
+    id: builder
+    attributes:
+      label: Does 3D Builder do it?
+      description: If so, how (menu, tool, behaviour).
