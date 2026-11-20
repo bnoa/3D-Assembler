@@ -911,6 +911,50 @@ export class Viewport {
     this.renderer.render(this.scene, this.camera);
     return this.renderer.domElement.toDataURL('image/png');
   }
+
+  /**
+   * The objects alone as seen from the camera, on white, cropped to them (3D Builder's paper print):
+   * no plate, rulers, fog, selection outline or gizmo.
+   */
+  objectsPNG(): string {
+    const bg = this.scene.background, fog = this.scene.fog;
+    const hiddenNow: Object3D[] = [];
+    const hide = (o: Object3D | null | undefined) => { if (o && o.visible) { o.visible = false; hiddenNow.push(o); } };
+    hide(this.plate);
+    hide(this.gizmo.getHelper());
+    hide(this.overlay);
+    for (const e of this.entries.values()) hide(e.outline);
+    // Drawn as not selected (no selection tint).
+    const selected = [...this.doc.selection];
+    this.doc.selection.clear();
+    for (const e of this.entries.values()) this.styleEntry(e);
+    this.scene.background = new Color('#ffffff');
+    this.scene.fog = null;
+    this.renderer.render(this.scene, this.camera);
+    const src = this.renderer.domElement;
+    const w = src.width, hgt = src.height;
+    const c = document.createElement('canvas');
+    c.width = w; c.height = hgt;
+    const g = c.getContext('2d')!;
+    g.drawImage(src, 0, 0);
+    this.scene.background = bg; this.scene.fog = fog;
+    for (const id of selected) this.doc.selection.add(id);
+    for (const e of this.entries.values()) this.styleEntry(e);
+    for (const o of hiddenNow) o.visible = true;
+    this.invalidate();
+    // Crop to what is not white.
+    const px = g.getImageData(0, 0, w, hgt).data;
+    let x0 = w, y0 = hgt, x1 = -1, y1 = -1;
+    for (let y = 0; y < hgt; y++) for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      if (px[i] < 250 || px[i + 1] < 250 || px[i + 2] < 250) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+    }
+    if (x1 < 0) return c.toDataURL('image/png');
+    const out = document.createElement('canvas');
+    out.width = x1 - x0 + 1; out.height = y1 - y0 + 1;
+    out.getContext('2d')!.drawImage(c, x0, y0, out.width, out.height, 0, 0, out.width, out.height);
+    return out.toDataURL('image/png');
+  }
 }
 
 // --- helpers ---------------------------------------------------------------------------------------

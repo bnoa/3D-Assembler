@@ -851,22 +851,22 @@ export class App {
     this.frameAll(); // 3D Builder frames the inserted shape
   }
 
-  /** Prints the current 3D view with the scene's name and object sizes (browser print dialog). */
+  /**
+   * Prints on paper as 3D Builder: the objects as seen in the view, alone on white and as large as
+   * the page allows, with the scene's name in a small grey tag at the bottom left.
+   */
   printPaper(): void {
-    const img = this.view.snapshotPNG();
-    const k = UNITS[this.prefs.unit];
-    const rows = this.doc.objects.map((o) => {
-      const s = size(objectBounds(o)).map((v) => fmtNum(v / k.mm)).join(' × ');
-      return `<tr><td>${escapeHtml(o.name)}</td><td>${s} ${k.short}</td></tr>`;
-    }).join('');
+    const img = this.view.objectsPNG();
     const frame = h('iframe', { style: 'position:fixed;width:0;height:0;border:0' });
     document.body.append(frame);
     const d = frame.contentDocument!;
     d.open();
     d.write(`<!doctype html><html lang="${currentLang()}"><head><meta charset="utf-8"><title>${escapeHtml(this.doc.name)}</title>
-<style>body{font-family:"Segoe UI",system-ui,sans-serif;margin:24px}img{max-width:100%;border:1px solid #ccc}
-table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom:1px solid #ddd}</style></head>
-<body><h1>${escapeHtml(this.doc.name)}</h1><img src="${img}" alt=""><table>${rows}</table></body></html>`);
+<style>@page{margin:12mm}html,body{margin:0;height:100%}body{position:relative;font-family:"Segoe UI",system-ui,sans-serif}
+.page{position:absolute;inset:0 0 14mm 0;display:flex;align-items:center;justify-content:center}
+img{max-width:100%;max-height:100%;object-fit:contain}
+.tag{position:absolute;left:0;bottom:0;background:#9b9b9b;color:#fff;font-size:9pt;padding:2mm 4mm;min-width:20mm;-webkit-print-color-adjust:exact;print-color-adjust:exact}</style></head>
+<body><div class="page"><img src="${img}" alt=""></div><div class="tag">${escapeHtml(this.doc.name)}</div></body></html>`);
     d.close();
     frame.contentWindow!.onafterprint = () => frame.remove();
     setTimeout(() => frame.contentWindow!.print(), 200);
