@@ -1532,7 +1532,7 @@ export const MODES: Record<string, ModeSpec> = {
   texture: {
     okLabel: 'Appliquer',
     history: true,
-    tip: 'Choisissez une image dans Sélectionné. En Pinceau, cliquez sur une zone de l’objet pour l’en recouvrir ; en Sticker, cliquez à l’endroit où poser l’autocollant.',
+    tip: 'Pour appliquer une texture à la surface, cliquez sur la liste déroulante Sélectionné. Pour afficher un aperçu de la texture sélectionnée pour l’objet, passez sur celui-ci et cliquez dessus pour appliquer la texture sélectionnée.',
     build(ctx) {
       const doc = ctx.app.doc;
       doc.checkpoint();
@@ -1891,7 +1891,7 @@ export const MODES: Record<string, ModeSpec> = {
   color: {
     okLabel: 'Couleur',
     history: true,
-    tip: 'Choisissez une couleur dans Sélectionné. Survolez l’objet pour voir la zone qui sera peinte, puis cliquez pour la peindre. Couverture agrandit ou réduit cette zone.',
+    tip: 'Pour colorier la surface, cliquez sur la liste déroulante Sélectionné. Pour afficher un aperçu de la couleur sélectionnée pour l’objet, passez sur celui-ci et cliquez dessus pour appliquer la couleur sélectionnée. Utilisez le curseur Couverture pour modifier la zone d’application de la couleur.',
     build(ctx) {
       // Painting edits the document directly; Annuler rolls back to this checkpoint.
       const doc = ctx.app.doc;

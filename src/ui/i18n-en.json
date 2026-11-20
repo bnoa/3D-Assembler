@@ -237,7 +237,6 @@
   "Agrandit l’objet pour que son mur le plus fin atteigne l’épaisseur minimale": "Enlarges the object so its thinnest wall reaches the minimum thickness",
   "{0}<span>Épaissir</span>": "{0}<span>Thicken</span>",
   "Appliquer": "Apply",
-  "Choisissez une image dans Sélectionné. En Pinceau, cliquez sur une zone de l’objet pour l’en recouvrir ; en Sticker, cliquez à l’endroit où poser l’autocollant.": "Choose an image in Selected. In Brush, click an area of the object to cover it; in Sticker, click where to place the sticker.",
   "Cette face n’a pas de texture.": "This face has no texture.",
   "Insérer l’URL": "Insert URL",
   "Sélecteur de texture": "Texture picker",
@@ -255,7 +254,6 @@
   "Cliquez sur un objet pour reprendre son matériau.": "Click an object to pick up its material.",
   "Cliquez sur un objet pour reprendre sa couleur.": "Click an object to pick up its color.",
   "{0}<span>Sélectionner les matériaux</span>": "{0}<span>Select materials</span>",
-  "Choisissez une couleur dans Sélectionné. Survolez l’objet pour voir la zone qui sera peinte, puis cliquez pour la peindre. Couverture agrandit ou réduit cette zone.": "Choose a color in Selected. Hover over the object to see the area that will be painted, then click to paint it. Coverage enlarges or shrinks that area.",
   "Importer une image": "Import image",
   "Grand côté": "Long side",
   "Niveaux": "Levels",
@@ -326,5 +324,7 @@
   "Supprime tous les matériaux de l’objet.": "Removes all materials from the object.",
   "Change le matériau de la totalité de l’objet en matériau de couleur spécifique. Cliquez sur Couleur pour choisir la couleur.": "Changes the material of the whole object to a specific colour material. Click Color to choose the colour.",
   "Change le matériau de la totalité de l’objet en matériau réaliste. Vous pouvez modifier la couleur ou le niveau de réflectivité de l’objet.": "Changes the material of the whole object to a realistic material. You can change the colour or the reflectivity of the object.",
-  "Change le matériau de la totalité de l’objet en matériau translucide. Vous pouvez choisir la couleur, ainsi que le niveau de réflectivité ou de translucidité de l’objet. Remarque : si l’objet est agrandi, la couleur affichée devient plus intense, si l’objet est réduit, la couleur affichée devient plus translucide.": "Changes the material of the whole object to a translucent material. You can choose the colour and the level of reflectivity or translucency of the object. Note: if the object is enlarged, the colour shown becomes more intense; if it is reduced, the colour shown becomes more translucent."
+  "Change le matériau de la totalité de l’objet en matériau translucide. Vous pouvez choisir la couleur, ainsi que le niveau de réflectivité ou de translucidité de l’objet. Remarque : si l’objet est agrandi, la couleur affichée devient plus intense, si l’objet est réduit, la couleur affichée devient plus translucide.": "Changes the material of the whole object to a translucent material. You can choose the colour and the level of reflectivity or translucency of the object. Note: if the object is enlarged, the colour shown becomes more intense; if it is reduced, the colour shown becomes more translucent.",
+  "Pour colorier la surface, cliquez sur la liste déroulante Sélectionné. Pour afficher un aperçu de la couleur sélectionnée pour l’objet, passez sur celui-ci et cliquez dessus pour appliquer la couleur sélectionnée. Utilisez le curseur Couverture pour modifier la zone d’application de la couleur.": "To colour the surface, click the Selected drop-down list. To preview the selected colour on the object, hover over it, and click it to apply the selected colour. Use the Coverage slider to change the area the colour is applied to.",
+  "Pour appliquer une texture à la surface, cliquez sur la liste déroulante Sélectionné. Pour afficher un aperçu de la texture sélectionnée pour l’objet, passez sur celui-ci et cliquez dessus pour appliquer la texture sélectionnée.": "To apply a texture to the surface, click the Selected drop-down list. To preview the selected texture on the object, hover over it, and click it to apply the selected texture."
 }
