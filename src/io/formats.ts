@@ -1,5 +1,5 @@
 // File import/export dispatch. Imported geometry is returned in millimetres, Z up.
-import { BufferAttribute, BufferGeometry, Color, Mesh, MeshStandardMaterial, Object3D, Scene } from 'three';
+import { BufferAttribute, BufferGeometry, Color, LinearSRGBColorSpace, Mesh, MeshStandardMaterial, Object3D, SRGBColorSpace, Scene } from 'three';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
@@ -41,19 +41,67 @@ export interface ImportedObject {
 }
 
 export const IMPORT_ACCEPT = '.3mf,.stl,.obj,.ply,.glb,.gltf,.wrl,.png,.jpg,.jpeg,.bmp,.gif,.webp';
-export type ExportFormat = '3mf' | 'stl' | 'obj' | 'ply' | 'glb';
+export type ExportFormat = '3mf' | 'stl' | 'obj' | 'ply' | 'gltf' | 'glb';
 
 export const EXPORT_FORMATS: { id: ExportFormat; label: string }[] = [
   { id: '3mf', label: '3MF (recommandé)' },
   { id: 'stl', label: 'STL' },
   { id: 'obj', label: 'OBJ' },
   { id: 'ply', label: 'PLY' },
+  { id: 'gltf', label: 'GLTF' },
   { id: 'glb', label: 'GLB' },
 ];
 
 const baseName = (file: string) => file.replace(/\.[^.]+$/, '');
 
-export async function importFile(file: File): Promise<ImportedObject[]> {
+/** Name of the material library an OBJ file refers to (its "mtllib" line), if any. */
+export function objMaterialLibrary(text: string): string | null {
+  const m = /^mtllib[ \t]+(.+?)[ \t]*$/m.exec(text);
+  return m ? m[1] : null;
+}
+
+/** Diffuse colours (Kd) of a .mtl file, by material name, as #rrggbb. */
+function parseMtl(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  let name = '';
+  for (const line of text.split(/\r?\n/)) {
+    const t = line.trim().split(/\s+/);
+    if (t[0] === 'newmtl') name = t.slice(1).join(' ');
+    else if (t[0] === 'Kd' && name) {
+      const c = t.slice(1, 4).map((x) => Math.max(0, Math.min(255, Math.round(parseFloat(x) * 255))));
+      if (c.length === 3 && c.every((x) => Number.isFinite(x))) out.set(name, '#' + c.map((x) => x.toString(16).padStart(2, '0')).join(''));
+    }
+  }
+  return out;
+}
+
+/** OBJ with the colours of its material library: the object's colour, and per-face colours if they differ. */
+function objObject(name: string, text: string, mtl?: string): ImportedObject {
+  const root = new OBJLoader().parse(text);
+  const mesh = objectToMesh(root, false); // Z up, as 3D Builder reads (and writes) OBJ files
+  if (!mtl) return { name, mesh };
+  const kd = parseMtl(mtl);
+  const faces: number[] = [];
+  root.traverse((o) => {
+    const m = o as Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    const count = (m.geometry.getIndex()?.count ?? m.geometry.getAttribute('position').count) / 3;
+    const colorOf = (i: number) => parseInt((kd.get(mats[i]?.name ?? '') ?? '#bcbcbc').slice(1), 16);
+    const groups = m.geometry.groups.length ? m.geometry.groups : [{ start: 0, count: count * 3, materialIndex: 0 }];
+    const per = new Array<number>(count).fill(colorOf(0));
+    for (const g of groups) for (let t = g.start / 3; t < (g.start + g.count) / 3 && t < count; t++) per[t] = colorOf(g.materialIndex ?? 0);
+    faces.push(...per);
+  });
+  if (faces.length !== mesh.indices.length / 3 || !faces.length) return { name, mesh };
+  const counts = new Map<number, number>();
+  for (const c of faces) counts.set(c, (counts.get(c) ?? 0) + 1);
+  const main = [...counts.entries()].sort((a, b) => b[1] - a[1])[0][0];
+  const color = '#' + main.toString(16).padStart(6, '0');
+  return counts.size > 1 ? { name, mesh, color, faceColors: Uint32Array.from(faces) } : { name, mesh, color };
+}
+
+export async function importFile(file: File, opts: { mtl?: string } = {}): Promise<ImportedObject[]> {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   const buf = await file.arrayBuffer();
   const name = baseName(file.name);
@@ -66,9 +114,9 @@ export async function importFile(file: File): Promise<ImportedObject[]> {
     case 'stl':
       return [{ name, mesh: geometryToMesh(new STLLoader().parse(buf)) }];
     case 'ply':
-      return [{ name, mesh: geometryToMesh(new PLYLoader().parse(buf)) }];
+      return [plyObject(name, new PLYLoader().parse(buf))];
     case 'obj':
-      return [{ name, mesh: objectToMesh(new OBJLoader().parse(new TextDecoder().decode(buf)), true) }];
+      return [objObject(name, new TextDecoder().decode(buf), opts.mtl)];
     case 'wrl':
       return [{ name, mesh: objectToMesh(new VRMLLoader(embeddedOnly()).parse(new TextDecoder().decode(buf), ''), true) }];
     case 'glb':
@@ -80,6 +128,28 @@ export async function importFile(file: File): Promise<ImportedObject[]> {
     default:
       throw new Error(`Format non pris en charge : .${ext}`);
   }
+}
+
+/** PLY with vertex colours (3D Builder writes one per vertex): the object's colour, or per-face colours. */
+function plyObject(name: string, g: BufferGeometry): ImportedObject {
+  const mesh = geometryToMesh(g);
+  const col = g.getAttribute('color');
+  if (!col) return { name, mesh };
+  const idx = g.getIndex();
+  const nt = mesh.indices.length / 3;
+  const faceColors = new Uint32Array(nt);
+  // The loader gives linear colours: back to the file's sRGB values.
+  const tmp = new Color();
+  const vertexColor = (v: number) => tmp.setRGB(col.getX(v), col.getY(v), col.getZ(v), LinearSRGBColorSpace).getHex(SRGBColorSpace);
+  // Colours are per vertex: a face takes the colour at least two of its corners share (on a fine mesh
+  // this follows the painted areas; a mesh with very few vertices cannot keep per-face colours).
+  for (let f = 0; f < nt; f++) {
+    const c = [0, 1, 2].map((k) => vertexColor(idx ? idx.getX(f * 3 + k) : f * 3 + k));
+    faceColors[f] = c[1] === c[2] ? c[1] : c[0];
+  }
+  const first = faceColors[0];
+  const hex = '#' + first.toString(16).padStart(6, '0');
+  return faceColors.every((c) => c === first) ? { name, mesh, color: hex } : { name, mesh, color: hex, faceColors };
 }
 
 function geometryToMesh(g: BufferGeometry): MeshData {
@@ -176,9 +246,11 @@ export async function exportScene(items: ExportItem[], format: ExportFormat, tit
     case 'stl':
       return new Blob([writeSTL(merged(items.map((i) => i.mesh)))], { type: 'model/stl' });
     case 'obj':
-      return new Blob([writeOBJ(items)], { type: 'text/plain' });
+      return new Blob([writeOBJ(items, title + '.mtl')], { type: 'text/plain' });
     case 'ply':
-      return new Blob([writePLY(merged(items.map((i) => i.mesh)))], { type: 'application/octet-stream' });
+      return new Blob([writePLY(items)], { type: 'application/octet-stream' });
+    case 'gltf':
+      return writeGLB(items, false);
     case 'glb':
       return writeGLB(items);
   }
@@ -208,37 +280,80 @@ function writeSTL(m: MeshData): ArrayBuffer {
   return buf;
 }
 
-function writeOBJ(items: ExportItem[]): string {
-  // OBJ is conventionally Y up: (x, y, z) -> (x, z, -y).
-  const lines = ['# 3D Assembler'];
+/** Colour of each face of an export item (painted faces, or the object's colour). */
+function faceColorsOf(it: ExportItem): Uint32Array {
+  const nt = it.mesh.indices.length / 3;
+  const base = parseInt(it.color.slice(1), 16) & 0xffffff;
+  const out = new Uint32Array(nt).fill(base);
+  if (it.faceColors) for (let f = 0; f < nt; f++) if (it.faceColors[f] !== undefined && it.faceColors[f] !== 0xffffffff) out[f] = it.faceColors[f] & 0xffffff;
+  return out;
+}
+
+const mtlName = (c: number) => 'Color_' + c.toString(16).padStart(6, '0');
+
+/**
+ * OBJ as 3D Builder writes it: Z up (coordinates as they are), one object per item, its colours as
+ * materials of a companion .mtl file (see objMaterials).
+ */
+function writeOBJ(items: ExportItem[], mtlFile: string): string {
+  const lines = ['# Exported from 3D Assembler', 'mtllib ' + mtlFile];
   let base = 1;
-  for (const it of items) {
-    lines.push(`o ${it.name.replace(/\s+/g, '_')}`);
+  items.forEach((it, n) => {
+    lines.push('', 'o ' + (it.name.replace(/\s+/g, '_') || 'Object.' + (n + 1)));
     const p = it.mesh.positions, t = it.mesh.indices;
-    for (let i = 0; i < p.length; i += 3) lines.push(`v ${p[i]} ${p[i + 2]} ${-p[i + 1]}`);
-    for (let i = 0; i < t.length; i += 3) lines.push(`f ${t[i] + base} ${t[i + 1] + base} ${t[i + 2] + base}`);
+    for (let i = 0; i < p.length; i += 3) lines.push('v ' + p[i].toFixed(6) + ' ' + p[i + 1].toFixed(6) + ' ' + p[i + 2].toFixed(6));
+    const fc = faceColorsOf(it);
+    let current = -1;
+    for (let f = 0; f < t.length / 3; f++) {
+      if (fc[f] !== current) { current = fc[f]; lines.push('usemtl ' + mtlName(current)); }
+      lines.push('f ' + (t[f * 3] + base) + ' ' + (t[f * 3 + 1] + base) + ' ' + (t[f * 3 + 2] + base));
+    }
     base += p.length / 3;
-  }
+  });
   return lines.join('\n') + '\n';
 }
 
-function writePLY(m: MeshData): ArrayBuffer {
-  const nv = m.positions.length / 3, nt = m.indices.length / 3;
-  const header = `ply\nformat binary_little_endian 1.0\ncomment 3D Assembler\nelement vertex ${nv}\nproperty float x\nproperty float y\nproperty float z\nelement face ${nt}\nproperty list uchar int vertex_indices\nend_header\n`;
+/** The .mtl file that goes with writeOBJ: one material per colour (diffuse colour Kd). */
+export function objMaterials(items: ExportItem[]): Blob {
+  const colors = new Set<number>();
+  for (const it of items) for (const c of faceColorsOf(it)) colors.add(c);
+  const lines = ['# Exported from 3D Assembler'];
+  for (const c of colors) lines.push('', 'newmtl ' + mtlName(c), 'Kd ' + [16, 8, 0].map((sh) => (((c >> sh) & 255) / 255).toFixed(6)).join(' '));
+  return new Blob([lines.join('\n') + '\n'], { type: 'text/plain' });
+}
+
+/** Binary PLY with a colour per vertex (RGBA), as 3D Builder writes it. */
+function writePLY(items: ExportItem[]): ArrayBuffer {
+  const nv = items.reduce((n, it) => n + it.mesh.positions.length / 3, 0), nt = items.reduce((n, it) => n + it.mesh.indices.length / 3, 0);
+  const header = 'ply\nformat binary_little_endian 1.0\ncomment 3D Assembler\nelement vertex ' + nv + '\nproperty float x\nproperty float y\nproperty float z\nproperty uchar red\nproperty uchar green\nproperty uchar blue\nproperty uchar alpha\nelement face ' + nt + '\nproperty list uchar int vertex_indices\nend_header\n';
   const hb = new TextEncoder().encode(header);
-  const buf = new ArrayBuffer(hb.length + nv * 12 + nt * 13);
+  const buf = new ArrayBuffer(hb.length + nv * 16 + nt * 13);
   new Uint8Array(buf).set(hb);
   const dv = new DataView(buf);
   let o = hb.length;
-  for (let i = 0; i < m.positions.length; i++) { dv.setFloat32(o, m.positions[i], true); o += 4; }
-  for (let f = 0; f < nt; f++) {
-    dv.setUint8(o++, 3);
-    for (let k = 0; k < 3; k++) { dv.setInt32(o, m.indices[f * 3 + k], true); o += 4; }
+  for (const it of items) {
+    // A vertex takes the object's colour, or that of a painted face using it (painted faces win).
+    const fc = faceColorsOf(it), base = parseInt(it.color.slice(1), 16) & 0xffffff;
+    const vc = new Uint32Array(it.mesh.positions.length / 3).fill(base);
+    for (let f = 0; f < fc.length; f++) if (fc[f] !== base) for (let k = 0; k < 3; k++) vc[it.mesh.indices[f * 3 + k]] = fc[f];
+    for (let v = 0; v < vc.length; v++) {
+      for (let k = 0; k < 3; k++) { dv.setFloat32(o, it.mesh.positions[v * 3 + k], true); o += 4; }
+      dv.setUint8(o++, (vc[v] >> 16) & 255); dv.setUint8(o++, (vc[v] >> 8) & 255); dv.setUint8(o++, vc[v] & 255); dv.setUint8(o++, 255);
+    }
+  }
+  let base = 0;
+  for (const it of items) {
+    const t = it.mesh.indices;
+    for (let f = 0; f < t.length / 3; f++) {
+      dv.setUint8(o++, 3);
+      for (let k = 0; k < 3; k++) { dv.setInt32(o, t[f * 3 + k] + base, true); o += 4; }
+    }
+    base += it.mesh.positions.length / 3;
   }
   return buf;
 }
 
-async function writeGLB(items: ExportItem[]): Promise<Blob> {
+async function writeGLB(items: ExportItem[], binary = true): Promise<Blob> {
   const scene = new Scene();
   const root = new Object3D();
   root.rotation.x = -Math.PI / 2; // back to Y up
@@ -252,6 +367,7 @@ async function writeGLB(items: ExportItem[]): Promise<Blob> {
     mesh.name = it.name;
     root.add(mesh);
   }
-  const out = await new GLTFExporter().parseAsync(scene, { binary: true });
-  return new Blob([out as ArrayBuffer], { type: 'model/gltf-binary' });
+  const out = await new GLTFExporter().parseAsync(scene, { binary });
+  // glTF: one JSON file with its data embedded.
+  return binary ? new Blob([out as ArrayBuffer], { type: 'model/gltf-binary' }) : new Blob([JSON.stringify(out)], { type: 'model/gltf+json' });
 }

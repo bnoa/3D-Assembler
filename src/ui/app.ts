@@ -11,7 +11,7 @@ import { repairAsync, selfIntersectionsAsync } from '../workers/client';
 import { shells } from '../repair/topology';
 import { nearestFaces, transferFaceColors } from '../repair/colors';
 import { type ObjectTexture, mergeTextures, transferTexture } from '../core/texture-data';
-import { EXPORT_FORMATS, IMPORT_ACCEPT, exportScene, importFile, type ExportFormat } from '../io/formats';
+import { EXPORT_FORMATS, IMPORT_ACCEPT, exportScene, objMaterialLibrary, objMaterials, importFile, type ExportFormat } from '../io/formats';
 import { read3MFInfo } from '../io/threemf';
 import { icon } from './icons';
 import { download, h, pickFiles } from './dom';
@@ -60,6 +60,8 @@ interface Prefs {
   lang: 'auto' | Lang;
   /** Look for a new version at startup (the request only asks GitHub for the latest version). */
   updateCheck: boolean;
+  /** « Ne plus afficher ce message » of the warning before saving in a format other than 3MF. */
+  hideFormatWarning?: boolean;
   /** Version whose update banner was closed: not shown again for it. */
   skippedVersion?: string;
 }
@@ -727,7 +729,7 @@ export class App {
       let cursor: number | null = this.doc.objects.length ? worldBounds(this.doc.objects).max[0] + 10 : null;
       for (const f of files) {
         const first = added.length;
-        for (const item of await importFile(f)) {
+        for (const item of await importFile(f, { mtl: await this.materialLibrary(f, all) })) {
           const opts = { name: item.name, color: item.color ?? IMPORT_GREY, faceColors: item.faceColors, texture: item.texture }; // no colour in the file: 3D Builder's grey
           const o = item.local ? this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts) : this.doc.addWorldMesh(item.mesh, { ...opts, dropOnPlate: true });
           if (item.local) {
@@ -790,6 +792,25 @@ export class App {
 
   async save(format?: ExportFormat): Promise<void> {
     const fmt = format ?? '3mf';
+    // As 3D Builder: a warning before a format that loses data (unless « Ne plus afficher ce message »).
+    if (fmt !== '3mf' && !this.prefs.hideFormatWarning) {
+      const never = h('input', { type: 'checkbox' }) as HTMLInputElement;
+      this.dialog('Enregistrer', [
+        h('p', {}, 'Vous risquez de perdre des données si vous enregistrez dans ce format. Choisissez 3MF pour une meilleure compatibilité.'),
+        h('label', {}, never, ' Ne plus afficher ce message'),
+      ], [{ label: 'Continuer', primary: true, run: () => {
+        if (never.checked) {
+          this.prefs.hideFormatWarning = true;
+          try { localStorage.setItem('3dbr.prefs', JSON.stringify(this.prefs)); } catch { /* storage unavailable */ }
+        }
+        void this.writeFile(fmt, format);
+      } }]);
+      return;
+    }
+    await this.writeFile(fmt, format);
+  }
+
+  private async writeFile(fmt: ExportFormat, format?: ExportFormat): Promise<void> {
     // 3MF as 3D Builder: each mesh in its own frame, its move / rotation / scale in the build item,
     // and a thumbnail of the view.
     const items = this.sceneItems(this.doc.selected.length && format ? this.doc.selected : this.doc.objects);
@@ -798,6 +819,8 @@ export class App {
       const thumb = fmt === '3mf' ? dataUrlBytes(this.view.snapshotPNG()) : undefined;
       const blob = await exportScene(items, fmt, this.doc.name, this.doc.info, thumb);
       download(blob, `${this.doc.name}.${fmt}`);
+      // OBJ: its colours in a companion .mtl file, as 3D Builder saves it.
+      if (fmt === 'obj') download(objMaterials(items), `${this.doc.name}.mtl`);
       this.doc.dirty = false;
       this.refresh();
       if (fmt === '3mf' && !(this.doc.selected.length && format)) this.dropBackup();
@@ -1203,14 +1226,37 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     ]);
   }
 
-  dialog(title: string, body: Node[], buttons: { label: string; primary?: boolean; run: () => void }[] = []): void {
-    const close = () => el.remove();
+  /**
+   * OBJ: the text of its material library (.mtl): one of the files opened with it, or, as 3D Builder,
+   * asked for (Continuer to look for it, Ignorer to go on without materials).
+   */
+  private async materialLibrary(f: File, all: File[]): Promise<string | undefined> {
+    if (!/\.obj$/i.test(f.name)) return undefined;
+    const lib = objMaterialLibrary(await f.text());
+    if (!lib) return undefined;
+    const wanted = lib.split(/[\\/]/).pop()!.toLowerCase();
+    const mate = all.find((x) => x.name.toLowerCase() === wanted);
+    if (mate) return mate.text();
+    const look = await new Promise<boolean>((resolve) => this.dialog('Fichier de matériaux', [
+      h('p', {}, 'Fichier de bibliothèque de matériaux obligatoire. Cliquez sur Ignorer pour continuer sans matériau ou sur Continuer pour rechercher le fichier :'),
+      h('p', {}, h('b', {}, lib)),
+    ], [{ label: 'Continuer', primary: true, run: () => resolve(true) }, { label: 'Ignorer', run: () => resolve(false) }], () => resolve(false)));
+    if (!look) return undefined;
+    const [file] = await pickFiles('.mtl', false);
+    return file ? file.text() : undefined;
+  }
+
+  /** A dialog; onDismiss runs when it is closed without one of its buttons (Annuler, click outside). */
+  dialog(title: string, body: Node[], buttons: { label: string; primary?: boolean; run: () => void }[] = [], onDismiss?: () => void): void {
+    let chosen = false;
+    const close = () => { el.remove(); if (!chosen) onDismiss?.(); };
+    buttons = buttons.map((b) => ({ ...b, run: () => { chosen = true; b.run(); } }));
     const el = h('div', { class: 'dialog', onclick: (e: MouseEvent) => { if (e.target === el) close(); } },
       h('div', { class: 'box', role: 'dialog', 'aria-label': title },
         h('h2', {}, title),
         ...body,
         h('div', { class: 'btns' },
-          ...buttons.map((b) => h('button', { class: b.primary ? 'primary' : '', onclick: () => { close(); b.run(); } }, b.label)),
+          ...buttons.map((b) => h('button', { class: b.primary ? 'primary' : '', onclick: () => { b.run(); close(); } }, b.label)),
           h('button', { onclick: close }, buttons.length ? 'Annuler' : 'Fermer'),
         )));
     document.body.append(el);
