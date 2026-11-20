@@ -297,7 +297,6 @@
   "Ouvrir la page": "Open the page",
   "Vous n’avez pas la dernière version de 3D Assembler ({0} est disponible).": "You don’t have the latest version of 3D Assembler ({0} is available).",
   "En savoir plus": "Learn more",
-  "Ce fichier glTF dépend d’autres fichiers, qui ne sont pas lus. Ouvrez plutôt la version .glb (tout en un seul fichier).": "This glTF file depends on other files, which are not read. Open the .glb version instead (everything in one file).",
   "Fichier 3MF trop volumineux ou endommagé.": "The 3MF file is too large or damaged.",
   "Modèle d’importation": "Import model",
   "Unités du fichier": "File units",
@@ -305,5 +304,9 @@
   " Ne plus afficher ce message": " Do not show this message again",
   "Ne plus afficher ce message": "Do not show this message again",
   "Fichier de matériaux": "Material file",
-  "Fichier de bibliothèque de matériaux obligatoire. Cliquez sur Ignorer pour continuer sans matériau ou sur Continuer pour rechercher le fichier :": "Material library file required. Click Ignore to continue without materials, or Continue to look for the file:"
+  "Fichier de bibliothèque de matériaux obligatoire. Cliquez sur Ignorer pour continuer sans matériau ou sur Continuer pour rechercher le fichier :": "Material library file required. Click Ignore to continue without materials, or Continue to look for the file:",
+  "Fichier de données": "Data file",
+  "Fichier de données binaires obligatoire. Cliquez sur le bouton Continuer pour rechercher le fichier obligatoire :": "Binary data file required. Click Continue to look for the required file:",
+  "« {0} » n’a pas été ouvert : il lui manque {1}.": "“{0}” was not opened: {1} is missing.",
+  "Fichier de données binaires manquant : {0}": "Missing binary data file: {0}"
 }

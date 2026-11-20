@@ -11,7 +11,7 @@ import { repairAsync, selfIntersectionsAsync } from '../workers/client';
 import { shells } from '../repair/topology';
 import { nearestFaces, transferFaceColors } from '../repair/colors';
 import { type ObjectTexture, mergeTextures, transferTexture } from '../core/texture-data';
-import { EXPORT_FORMATS, IMPORT_ACCEPT, exportScene, objMaterialLibrary, objMaterials, importFile, type ExportFormat } from '../io/formats';
+import { EXPORT_FORMATS, IMPORT_ACCEPT, exportScene, objMaterialLibrary, objMaterials, importFile, gltfCompanions, type ExportFormat } from '../io/formats';
 import { read3MFInfo } from '../io/threemf';
 import { icon } from './icons';
 import { download, h, pickFiles } from './dom';
@@ -713,7 +713,8 @@ export class App {
       void imageThumb(img).then((t) => addRecent(img, t)).then(() => this.buildHome());
       await this.importImage(img);
     }
-    const files = all.filter((f) => !isImage(f));
+    // .mtl and .bin files go with an OBJ or a glTF opened with them; they are not models.
+    const files = all.filter((f) => !isImage(f) && !/.(mtl|bin)$/i.test(f.name));
     if (!files.length) return;
     await this.busy(async () => {
       if (replace) {
@@ -729,7 +730,9 @@ export class App {
       let cursor: number | null = this.doc.objects.length ? worldBounds(this.doc.objects).max[0] + 10 : null;
       for (const f of files) {
         const first = added.length;
-        for (const item of await importFile(f, { mtl: await this.materialLibrary(f, all) })) {
+        const companions = await this.gltfData(f, all);
+        if (companions === null) continue;
+        for (const item of await importFile(f, { mtl: await this.materialLibrary(f, all), companions })) {
           const opts = { name: item.name, color: item.color ?? IMPORT_GREY, faceColors: item.faceColors, texture: item.texture }; // no colour in the file: 3D Builder's grey
           const o = item.local ? this.doc.addTransformedMesh(item.local.mesh, item.local.transform, opts) : this.doc.addWorldMesh(item.mesh, { ...opts, dropOnPlate: true });
           if (item.local) {
@@ -753,7 +756,7 @@ export class App {
       // Formats without a unit (STL, OBJ, PLY, VRML): as 3D Builder, the « Unités du fichier » screen
       // asks for the unit before the import is kept (mm preselected).
       if (added.length && files.some((f) => /\.(stl|obj|ply|wrl)$/i.test(f.name))) this.enterMode(MODES.importUnit);
-      else if (!this.doc.objects.some((o) => added.includes(o.id) && !isValid(o))) this.toast(`${added.length} objet(s) chargé(s).`, 'ok');
+      else if (added.length && !this.doc.objects.some((o) => added.includes(o.id) && !isValid(o))) this.toast(`${added.length} objet(s) chargé(s).`, 'ok');
     });
   }
 
@@ -1244,6 +1247,30 @@ table{border-collapse:collapse;margin-top:16px}td{padding:4px 12px;border-bottom
     if (!look) return undefined;
     const [file] = await pickFiles('.mtl', false);
     return file ? file.text() : undefined;
+  }
+
+  /**
+   * glTF: the files its data is kept in (.bin): those opened with it, or, as 3D Builder, asked for.
+   * Without them the file cannot be read (null): unlike 3D Builder, the scene is kept as it was.
+   */
+  private async gltfData(f: File, all: File[]): Promise<Map<string, Uint8Array> | null | undefined> {
+    if (!/.gltf$/i.test(f.name)) return undefined;
+    const out = new Map<string, Uint8Array>();
+    for (const wanted of gltfCompanions(await f.text())) {
+      const key = wanted.toLowerCase();
+      if (out.has(key)) continue;
+      let file = all.find((x) => x.name.toLowerCase() === key);
+      if (!file) {
+        const look = await new Promise<boolean>((resolve) => this.dialog('Fichier de données', [
+          h('p', {}, 'Fichier de données binaires obligatoire. Cliquez sur le bouton Continuer pour rechercher le fichier obligatoire :'),
+          h('p', {}, h('b', {}, wanted)),
+        ], [{ label: 'Continuer', primary: true, run: () => resolve(true) }, { label: 'Ignorer', run: () => resolve(false) }], () => resolve(false)));
+        if (look) [file] = await pickFiles('.' + (wanted.split('.').pop() ?? 'bin'), false);
+      }
+      if (!file) { this.toast(`« ${f.name} » n’a pas été ouvert : il lui manque ${wanted}.`, 'warn'); return null; }
+      out.set(key, new Uint8Array(await file.arrayBuffer()));
+    }
+    return out;
   }
 
   /** A dialog; onDismiss runs when it is closed without one of its buttons (Annuler, click outside). */

@@ -15,12 +15,29 @@ import { MAX_PIXELS, MAX_SIDE } from './png';
  * Loader manager that keeps a model to what it contains: links to outside files or addresses
  * (glTF buffers and images, VRML textures) are not fetched, so opening a file sends no request.
  */
-/** A .gltf whose data lives in other files (or on the web) cannot be read: they are never fetched. */
-function refuseExternal(text: string): void {
-  let j: { buffers?: { uri?: string }[]; images?: { uri?: string }[] };
-  try { j = JSON.parse(text); } catch { return; }
-  const outside = [...(j.buffers ?? []), ...(j.images ?? [])].some((x) => typeof x?.uri === 'string' && !/^data:/i.test(x.uri));
-  if (outside) throw new Error('Ce fichier glTF dépend d’autres fichiers, qui ne sont pas lus. Ouvrez plutôt la version .glb (tout en un seul fichier).');
+type GltfJson = { buffers?: { uri?: string }[]; images?: { uri?: string }[] };
+const outsideParts = (j: GltfJson) => [...(j.buffers ?? []), ...(j.images ?? [])].filter((x) => typeof x?.uri === 'string' && !/^data:/i.test(x.uri));
+
+/** Files a .gltf keeps its data in (3D Builder writes its buffer to a .bin next to it), by name. */
+export function gltfCompanions(text: string): string[] {
+  try { return outsideParts(JSON.parse(text) as GltfJson).map((x) => decodeURIComponent(x.uri!).split(/[\/]/).pop()!); } catch { return []; }
+}
+
+/**
+ * A .gltf with its companion files put inside it (as data). Files that are not given, or addresses
+ * on the web, are never fetched: the file cannot be read without them.
+ */
+function inlineGltf(text: string, given: Map<string, Uint8Array>): string {
+  let j: GltfJson;
+  try { j = JSON.parse(text) as GltfJson; } catch { return text; }
+  for (const part of outsideParts(j)) {
+    const data = given.get(decodeURIComponent(part.uri!).split(/[\/]/).pop()!.toLowerCase());
+    if (!data) throw new Error('Fichier de données binaires manquant : ' + part.uri);
+    let bin = '';
+    for (let i = 0; i < data.length; i += 0x8000) bin += String.fromCharCode(...data.subarray(i, i + 0x8000));
+    part.uri = 'data:application/octet-stream;base64,' + btoa(bin);
+  }
+  return JSON.stringify(j);
 }
 
 function embeddedOnly(): LoadingManager {
@@ -40,7 +57,7 @@ export interface ImportedObject {
   local?: { mesh: MeshData; transform: number[] };
 }
 
-export const IMPORT_ACCEPT = '.3mf,.stl,.obj,.ply,.glb,.gltf,.wrl,.png,.jpg,.jpeg,.bmp,.gif,.webp';
+export const IMPORT_ACCEPT = '.3mf,.stl,.obj,.mtl,.ply,.glb,.gltf,.bin,.wrl,.png,.jpg,.jpeg,.bmp,.gif,.webp';
 export type ExportFormat = '3mf' | 'stl' | 'obj' | 'ply' | 'gltf' | 'glb';
 
 export const EXPORT_FORMATS: { id: ExportFormat; label: string }[] = [
@@ -101,7 +118,7 @@ function objObject(name: string, text: string, mtl?: string): ImportedObject {
   return counts.size > 1 ? { name, mesh, color, faceColors: Uint32Array.from(faces) } : { name, mesh, color };
 }
 
-export async function importFile(file: File, opts: { mtl?: string } = {}): Promise<ImportedObject[]> {
+export async function importFile(file: File, opts: { mtl?: string; companions?: Map<string, Uint8Array> } = {}): Promise<ImportedObject[]> {
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   const buf = await file.arrayBuffer();
   const name = baseName(file.name);
@@ -121,9 +138,9 @@ export async function importFile(file: File, opts: { mtl?: string } = {}): Promi
       return [{ name, mesh: objectToMesh(new VRMLLoader(embeddedOnly()).parse(new TextDecoder().decode(buf), ''), true) }];
     case 'glb':
     case 'gltf': {
-      if (ext === 'gltf') refuseExternal(new TextDecoder().decode(buf));
-      const gltf = await new GLTFLoader(embeddedOnly()).parseAsync(ext === 'glb' ? buf : new TextDecoder().decode(buf), '');
-      return [{ name, mesh: objectToMesh(gltf.scene, true), color: firstColor(gltf.scene) }];
+      const data = ext === 'glb' ? buf : inlineGltf(new TextDecoder().decode(buf), opts.companions ?? new Map());
+      const gltf = await new GLTFLoader(embeddedOnly()).parseAsync(data, '');
+      return gltfObjects(name, gltf.scene);
     }
     default:
       throw new Error(`Format non pris en charge : .${ext}`);
@@ -183,13 +200,30 @@ function objectToMesh(root: Object3D, yUp: boolean): MeshData {
   return merged(parts);
 }
 
-function firstColor(root: Object3D): string | undefined {
-  let color: string | undefined;
-  root.traverse((o) => {
-    const mat = (o as Mesh).material as MeshStandardMaterial | undefined;
-    if (!color && mat && 'color' in mat && mat.color instanceof Color) color = `#${mat.color.getHexString()}`;
+/**
+ * glTF as 3D Builder reads it: one object per mesh, with its colour, Y up turned to Z up, and the
+ * format's metres turned to millimetres.
+ */
+function gltfObjects(name: string, scene: Object3D): ImportedObject[] {
+  const root = new Object3D();
+  root.rotation.x = Math.PI / 2;
+  root.scale.setScalar(1000);
+  root.add(scene);
+  root.updateMatrixWorld(true);
+  const out: ImportedObject[] = [];
+  scene.traverse((o) => {
+    const m = o as Mesh;
+    if (!m.isMesh || !m.geometry) return;
+    const mesh = geometryToMesh(m.geometry.clone().applyMatrix4(m.matrixWorld));
+    if (!mesh.indices.length) return;
+    const mat = (Array.isArray(m.material) ? m.material[0] : m.material) as MeshStandardMaterial | undefined;
+    const color = mat && mat.color instanceof Color ? '#' + mat.color.getHexString() : undefined;
+    // Unnamed meshes (named mesh_0… by the loader) take the file's name.
+    const own = m.name && !/^mesh_d+(_d+)?$/.test(m.name) ? m.name : '';
+    out.push({ name: own || name + (out.length ? ' ' + (out.length + 1) : ''), mesh, color });
   });
-  return color;
+  if (!out.length) throw new Error('Aucun objet 3D trouvé dans ce fichier.');
+  return out;
 }
 
 /**
@@ -357,6 +391,7 @@ async function writeGLB(items: ExportItem[], binary = true): Promise<Blob> {
   const scene = new Scene();
   const root = new Object3D();
   root.rotation.x = -Math.PI / 2; // back to Y up
+  root.scale.setScalar(0.001); // glTF is in metres
   scene.add(root);
   for (const it of items) {
     const g = new BufferGeometry();
