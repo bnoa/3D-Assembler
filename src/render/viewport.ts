@@ -4,7 +4,7 @@ import {
   DoubleSide, Fog, Group, HemisphereLight, LineBasicMaterial, LineSegments, Mesh, MeshBasicMaterial,
   MeshStandardMaterial, Object3D, PCFSoftShadowMap, PerspectiveCamera, PMREMGenerator, Plane, PlaneGeometry, Raycaster,
   RepeatWrapping, ClampToEdgeWrapping, DataTexture, LinearFilter, LinearMipmapLinearFilter, Scene, ShadowMaterial, SRGBColorSpace, Vector2, Vector3, WebGLRenderer,
-  GridHelper, Quaternion,
+  GridHelper, Quaternion, WireframeGeometry,
 } from 'three';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { TransformControls } from 'three/addons/controls/TransformControls.js';
@@ -37,6 +37,15 @@ interface Entry {
   outline: LineSegments<BufferGeometry, LineBasicMaterial> | null;
   /** Textured faces, one mesh per image, drawn over the object. */
   overlays: Mesh<BufferGeometry, MeshStandardMaterial>[];
+  /** Triangle edges drawn over the faces (Rendu filaire), built when first shown. */
+  wire?: LineSegments<WireframeGeometry, LineBasicMaterial> | null;
+}
+
+/** 3D Builder's "Rendu filaire": the faces stay, their triangle edges are drawn over them. */
+function wireOf(geo: BufferGeometry): LineSegments<WireframeGeometry, LineBasicMaterial> {
+  const w = new LineSegments(new WireframeGeometry(geo), new LineBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.28 }));
+  w.raycast = () => {}; // never picked: clicks go to the faces
+  return w;
 }
 
 const GHOST_COLOR = '#7fa6e6';
@@ -322,6 +331,7 @@ export class Viewport {
     e.mesh.geometry.dispose();
     e.mesh.material.dispose();
     if (e.outline) { e.outline.geometry.dispose(); e.outline.material.dispose(); }
+    if (e.wire) { e.wire.geometry.dispose(); e.wire.material.dispose(); }
     for (const o of e.overlays) { o.geometry.dispose(); o.material.map?.dispose(); o.material.dispose(); }
   }
 
@@ -334,14 +344,16 @@ export class Viewport {
     m.vertexColors = painted;
     m.color.set(invalid ? INVALID_COLOR : !s.colors ? '#b9bec5' : painted ? '#ffffff' : e.obj.color);
     m.emissive.set(selected ? '#1d3a52' : '#000000');
-    m.wireframe = s.wireframe;
+    m.wireframe = false;
+    if (s.wireframe && !e.wire) { e.wire = wireOf(e.mesh.geometry); e.mesh.add(e.wire); }
+    if (e.wire) e.wire.visible = s.wireframe;
     const look = MATERIAL_LOOK[e.obj.material ?? 'simple'];
     m.roughness = look.roughness;
     m.metalness = look.metalness;
     const glassy = look.opacity < 1;
-    m.transparent = s.xray || glassy;
-    m.opacity = s.xray ? 0.35 : look.opacity;
-    m.depthWrite = !s.xray && !glassy;
+    m.transparent = glassy;
+    m.opacity = look.opacity;
+    m.depthWrite = !glassy;
     m.flatShading = !s.smoothing;
     m.envMapIntensity = s.reflections ? 1 : 0;
     m.needsUpdate = true;
@@ -354,11 +366,12 @@ export class Viewport {
     e.mesh.castShadow = s.shadows;
     for (const o of e.overlays) {
       o.visible = s.colors && !invalid;
-      o.material.wireframe = s.wireframe;
       o.material.emissive.set(selected ? '#1d3a52' : '#000000');
       o.material.envMapIntensity = s.reflections ? 1 : 0;
     }
-    if (((this.focusId !== null && e.obj.id !== this.focusId) || (this.modeKeep && !this.modeKeep.has(e.obj.id))) && !s.xray) {
+    // Rayon X (as 3D Builder): the objects not selected turn translucent blue, the selection stays.
+    const xray = s.xray && !selected;
+    if (xray || (((this.focusId !== null && e.obj.id !== this.focusId) || (this.modeKeep && !this.modeKeep.has(e.obj.id))) && !s.xray)) {
       // Another object is focused from the list: translucent blue so it shows through.
       m.vertexColors = false;
       m.color.set(GHOST_COLOR);
@@ -388,6 +401,7 @@ export class Viewport {
       for (const e of this.entries.values()) {
         e.mesh.geometry.dispose();
         e.mesh.geometry = toGeometry(e.obj.mesh, this.settings.smoothing, e.obj.faceColors, e.obj.color);
+        if (e.wire) { e.mesh.remove(e.wire); e.wire.geometry.dispose(); e.wire.material.dispose(); e.wire = null; }
       }
     }
     for (const e of this.entries.values()) this.styleEntry(e);
@@ -423,9 +437,9 @@ export class Viewport {
         transparent: (p.opacity ?? 1) < 1, opacity: p.opacity ?? 1, depthWrite: (p.opacity ?? 1) >= 1,
         // Highlights drawn over the object's own faces win the depth test.
         polygonOffset: !!p.onTop, polygonOffsetFactor: -2, polygonOffsetUnits: -2,
-        wireframe: !!p.wireframe,
       });
       const mesh = new Mesh(geo, mat);
+      if (p.wireframe) mesh.add(wireOf(geo));
       mesh.castShadow = (p.opacity ?? 1) >= 1;
       this.overlay.add(mesh);
       if (p.edges) this.overlay.add(new LineSegments(outlineGeometry(p.mesh), new LineBasicMaterial({ color: 0x1b1d20 })));
