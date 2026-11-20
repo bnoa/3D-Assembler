@@ -135,6 +135,6 @@ The source code of 3D Assembler is meant to be archived at [Software Heritage](h
 
 ## License and disclaimer
 
-3D Assembler is released under the [MIT license](LICENSE).
+3D Assembler is released under the [MIT license](LICENSE). It includes three.js, fflate and manifold-3d (with Clipper2), under their own permissive licenses: see [third-party licenses](public/third-party-licenses.txt), also shown in the app (Settings > About).
 
 3D Assembler is free and independent software. It is not affiliated with, endorsed or sponsored by Microsoft Corporation. Microsoft, Windows and 3D Builder are trademarks of the Microsoft group of companies. Other names are trademarks of their respective owners. The software is provided "as is", without warranty of any kind.

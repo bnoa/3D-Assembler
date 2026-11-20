@@ -181,7 +181,6 @@
   "La barre du bas règle la position, la rotation et la taille au millimètre près.": "The bottom bar sets position, rotation and size to the millimeter.",
   "Un objet rouge n’est pas valide : utilisez Réparer avant de l’imprimer.": "A red object is not valid: use Repair before printing it.",
   "Raccourcis : Ctrl+Z / Ctrl+Y, Suppr, Ctrl+C / X / V, Ctrl+D, Ctrl+A, Échap.": "Shortcuts: Ctrl+Z / Ctrl+Y, Del, Ctrl+C / X / V, Ctrl+D, Ctrl+A, Esc.",
-  "3D Assembler 0.1 : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.": "3D Assembler 0.1: a free tool for preparing 3D models before printing, inspired by Microsoft 3D Builder and designed to replace it. The project of a 3D printing enthusiast saddened by the discontinuation of that software.",
   "Logiciel libre et indépendant, sous licence MIT. Il n’est ni affilié à Microsoft Corporation, ni approuvé, ni soutenu par elle. Microsoft, Windows et 3D Builder sont des marques du groupe Microsoft. Le code est écrit de zéro et reproduit des comportements : il ne contient aucun code de Microsoft, ni copié ni traduit, ni aucun de ses modèles, textures ou images.": "Free and independent software under the MIT license. It is not affiliated with, endorsed by, or supported by Microsoft Corporation. Microsoft, Windows and 3D Builder are trademarks of the Microsoft group of companies. The code is written from scratch and reproduces behaviors: it contains no Microsoft code, copied or translated, nor any of its models, textures or images.",
   "Annonce de la fin de 3D Builder par Microsoft": "Microsoft's announcement of the end of 3D Builder",
   "Rendu three.js, opérations solides manifold-3d.": "Rendering by three.js, solid operations by manifold-3d.",
@@ -310,5 +309,7 @@
   "« {0} » n’a pas été ouvert : il lui manque {1}.": "“{0}” was not opened: {1} is missing.",
   "Fichier de données binaires manquant : {0}": "Missing binary data file: {0}",
   "po": "in",
-  "pi": "ft"
+  "pi": "ft",
+  "Licences des logiciels tiers": "Third-party licenses",
+  "3D Assembler {0} : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.": "3D Assembler {0}: a free tool for preparing 3D models before printing, inspired by Microsoft 3D Builder and designed to replace it. The project of a 3D printing enthusiast saddened by the discontinuation of that software."
 }

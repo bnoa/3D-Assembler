@@ -1432,10 +1432,26 @@ img{max-width:100%;max-height:100%;object-fit:contain}
 
   private showAbout(): void {
     this.dialog('À propos', [
-      h('p', {}, '3D Assembler 0.1 : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.'),
+      h('p', {}, `3D Assembler ${APP_VERSION} : un outil libre pour préparer des modèles 3D avant l’impression, inspiré de Microsoft 3D Builder et pensé pour le remplacer. Le projet d’un passionné d’impression 3D, attristé par la disparition de ce logiciel.`),
       h('p', {}, 'Logiciel libre et indépendant, sous licence MIT. Il n’est ni affilié à Microsoft Corporation, ni approuvé, ni soutenu par elle. Microsoft, Windows et 3D Builder sont des marques du groupe Microsoft. Le code est écrit de zéro et reproduit des comportements : il ne contient aucun code de Microsoft, ni copié ni traduit, ni aucun de ses modèles, textures ou images.'),
       h('p', {}, h('a', { href: 'https://learn.microsoft.com/windows/whats-new/deprecated-features', target: '_blank', rel: 'noopener' }, 'Annonce de la fin de 3D Builder par Microsoft')),
       h('p', { style: 'color:var(--text-dim)' }, 'Rendu three.js, opérations solides manifold-3d.'),
+      h('p', {}, h('button', { class: 'set-link', onclick: () => void this.showThirdParty() }, 'Licences des logiciels tiers')),
+    ]);
+  }
+
+  /** The licences of the software shipped inside 3D Assembler (public/third-party-licenses.txt). */
+  private async showThirdParty(): Promise<void> {
+    let text: string;
+    try {
+      const res = await fetch(`${import.meta.env.BASE_URL}third-party-licenses.txt`);
+      if (!res.ok) throw new Error(String(res.status));
+      text = await res.text();
+    } catch {
+      text = 'https://github.com/bnoa/3D-Assembler/blob/main/public/third-party-licenses.txt';
+    }
+    this.dialog('Licences des logiciels tiers', [
+      h('pre', { style: 'max-height:60vh;overflow:auto;white-space:pre-wrap;font-size:12px;user-select:text' }, text),
     ]);
   }
 
